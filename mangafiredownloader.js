@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MangaFireDownloader
 // @namespace    https://github.com/Timesient/manga-download-scripts
-// @version      1.1
+// @version      1.2
 // @license      GPL-3.0
 // @author       Timesient
 // @description  Manga downloader for mangafire.to
@@ -21,27 +21,14 @@
 
   let initialized = false;
 
-  const checkAndInit = async () => {
-    let imgEls = document.querySelectorAll('.reader-img, img.reader-swiper__img, .swiper-wrapper img');
-    if (imgEls.length > 0 && !initialized) {
+  const checkAndInit = () => {
+    let pageEls = Array.from(document.querySelectorAll('.reader__page'));
+    if (pageEls.length === 0) {
+      pageEls = Array.from(document.querySelectorAll('.reader-swiper__slide, .swiper-slide'));
+    }
+
+    if (pageEls.length > 0 && !initialized) {
       initialized = true;
-
-      // Force Swiper to load all lazy-loaded page images
-      const segs = document.querySelectorAll('.reader-progress__seg');
-      if (segs.length > 0) {
-        for (let i = 0; i < segs.length; i++) {
-          segs[i].click();
-          await new Promise(r => setTimeout(r, 40));
-        }
-        segs[0]?.click();
-      }
-
-      // Collect all loaded image URLs
-      imgEls = document.querySelectorAll('.reader-img, img.reader-swiper__img, .swiper-wrapper img');
-      const urls = Array.from(imgEls)
-        .map(img => img.src || img.getAttribute('data-src'))
-        .filter(src => src && src.startsWith('http'));
-      const uniqueUrls = Array.from(new Set(urls));
 
       let title = document.title;
       const syncEl = document.getElementById('syncData');
@@ -55,15 +42,18 @@
       }
 
       ImageDownloader.init({
-        maxImageAmount: uniqueUrls.length,
+        maxImageAmount: pageEls.length,
         title: title,
         getImagePromises: (startNum, endNum) => {
-          return uniqueUrls
-            .slice(startNum - 1, endNum)
-            .map(url => getImage(url)
-              .then(ImageDownloader.fulfillHandler)
-              .catch(ImageDownloader.rejectHandler)
+          const promises = [];
+          for (let i = startNum - 1; i < endNum; i++) {
+            promises.push(
+              getPageImage(pageEls[i])
+                .then(ImageDownloader.fulfillHandler)
+                .catch(ImageDownloader.rejectHandler)
             );
+          }
+          return promises;
         }
       });
     }
@@ -73,7 +63,25 @@
   setInterval(checkAndInit, 1500);
   window.addEventListener('popstate', () => { initialized = false; });
 
-  function getImage(url) {
+  async function getPageImage(pageEl) {
+    if (!pageEl) throw new Error('Page element not found');
+
+    // 1. Scroll page container into view to trigger MangaFire lazy mounting
+    pageEl.scrollIntoView({ block: 'center' });
+
+    // 2. Wait up to 6 seconds for <img> tag to appear inside pageEl
+    for (let attempt = 0; attempt < 30; attempt++) {
+      const img = pageEl.querySelector('img.reader-img, img.reader-swiper__img, img');
+      if (img && img.src && img.src.startsWith('http')) {
+        return fetchImageData(img.src);
+      }
+      await new Promise(r => setTimeout(r, 200));
+    }
+
+    throw new Error(`Timeout loading image for page element`);
+  }
+
+  function fetchImageData(url) {
     return new Promise((resolve, reject) => {
       GM_xmlhttpRequest({
         method: 'GET',
