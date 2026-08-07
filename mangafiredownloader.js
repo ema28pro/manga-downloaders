@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MangaFireDownloader
 // @namespace    https://github.com/Timesient/manga-download-scripts
-// @version      1.0
+// @version      1.1
 // @license      GPL-3.0
 // @author       Timesient
 // @description  Manga downloader for mangafire.to
@@ -20,10 +20,29 @@
   'use strict';
 
   let initialized = false;
-  const checkAndInit = () => {
-    const imgEls = Array.from(document.querySelectorAll('.reader-img, img.reader-swiper__img, .swiper-wrapper img'));
+
+  const checkAndInit = async () => {
+    let imgEls = document.querySelectorAll('.reader-img, img.reader-swiper__img, .swiper-wrapper img');
     if (imgEls.length > 0 && !initialized) {
       initialized = true;
+
+      // Force Swiper to load all lazy-loaded page images
+      const segs = document.querySelectorAll('.reader-progress__seg');
+      if (segs.length > 0) {
+        for (let i = 0; i < segs.length; i++) {
+          segs[i].click();
+          await new Promise(r => setTimeout(r, 40));
+        }
+        segs[0]?.click();
+      }
+
+      // Collect all loaded image URLs
+      imgEls = document.querySelectorAll('.reader-img, img.reader-swiper__img, .swiper-wrapper img');
+      const urls = Array.from(imgEls)
+        .map(img => img.src || img.getAttribute('data-src'))
+        .filter(src => src && src.startsWith('http'));
+      const uniqueUrls = Array.from(new Set(urls));
+
       let title = document.title;
       const syncEl = document.getElementById('syncData');
       if (syncEl) {
@@ -35,23 +54,23 @@
         } catch (e) {}
       }
 
-      const urls = imgEls.map(img => img.src || img.getAttribute('data-src')).filter(src => src && src.startsWith('http'));
-      const uniqueUrls = Array.from(new Set(urls));
-
       ImageDownloader.init({
         maxImageAmount: uniqueUrls.length,
         title: title,
         getImagePromises: (startNum, endNum) => {
           return uniqueUrls
             .slice(startNum - 1, endNum)
-            .map(url => getImage(url));
+            .map(url => getImage(url)
+              .then(ImageDownloader.fulfillHandler)
+              .catch(ImageDownloader.rejectHandler)
+            );
         }
       });
     }
   };
 
   checkAndInit();
-  setInterval(checkAndInit, 1000);
+  setInterval(checkAndInit, 1500);
   window.addEventListener('popstate', () => { initialized = false; });
 
   function getImage(url) {
@@ -59,8 +78,18 @@
       GM_xmlhttpRequest({
         method: 'GET',
         url: url,
+        headers: {
+          'Referer': window.location.href,
+          'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8'
+        },
         responseType: 'arraybuffer',
-        onload: res => resolve(res.response),
+        onload: res => {
+          if (res.status === 200 && res.response && res.response.byteLength > 1000) {
+            resolve(res.response);
+          } else {
+            reject(new Error(`Failed to fetch image (status ${res.status})`));
+          }
+        },
         onerror: err => reject(err)
       });
     });

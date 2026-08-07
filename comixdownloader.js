@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ComixDownloader
 // @namespace    https://github.com/Timesient/manga-download-scripts
-// @version      1.0
+// @version      1.1
 // @license      GPL-3.0
 // @author       Timesient
 // @description  Manga downloader for comix.to
@@ -41,7 +41,10 @@
         getImagePromises: (startNum, endNum) => {
           const promises = [];
           for (let i = startNum - 1; i < endNum; i++) {
-            promises.push(getPageImageData(pageEls[i]));
+            promises.push(getPageImageData(pageEls[i])
+              .then(ImageDownloader.fulfillHandler)
+              .catch(ImageDownloader.rejectHandler)
+            );
           }
           return promises;
         }
@@ -92,8 +95,18 @@
       GM_xmlhttpRequest({
         method: 'GET',
         url: url,
+        headers: {
+          'Referer': window.location.href,
+          'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8'
+        },
         responseType: 'arraybuffer',
-        onload: res => resolve(res.response),
+        onload: res => {
+          if (res.status === 200 && res.response && res.response.byteLength > 1000) {
+            resolve(res.response);
+          } else {
+            reject(new Error(`Failed to fetch image (status ${res.status})`));
+          }
+        },
         onerror: err => reject(err)
       });
     });
