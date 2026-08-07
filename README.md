@@ -26,6 +26,15 @@ Userscripts independientes para descargar capítulos de manga completos en forma
 - **Procesamiento de imágenes**: Las peticiones de red usan `GM_xmlhttpRequest` con cabeceras `Referer` adecuadas para evitar bloqueos por CDN y respuestas de error de 5KB.
 - **Empaquetado**: Comprime las páginas a un archivo ZIP con `JSZip` y fuerza la descarga con `FileSaver`.
 
+## Librerías de Respaldo (`lib/`)
+
+Se almacenan copias locales de todas las dependencias externas en la carpeta `lib/` para prevenir fallos en caso de eliminación o caída de CDNs / repositorios de terceros:
+
+- `lib/ImageDownloaderLib.js`: Interfaz de usuario flotante y controlador de descarga.
+- `lib/axios.min.js`: Cliente HTTP para interacción con APIs.
+- `lib/jszip.min.js`: Generación y compresión de archivos ZIP en memoria.
+- `lib/FileSaver.min.js`: Gestor de descargas nativas del navegador.
+
 ## Licencia
 
 GPL-3.0
