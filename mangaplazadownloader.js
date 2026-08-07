@@ -1,17 +1,21 @@
 // ==UserScript==
 // @name         MangaPlazaDownloader
-// @namespace    https://github.com/Timesient/manga-download-scripts
-// @version      1.0
+// @namespace    https://github.com/ema28pro/manga-downloaders
+// @version      1.1
 // @license      GPL-3.0
-// @author       Timesient
+// @author       ema28pro
 // @description  Manga downloader for mangaplaza.com
 // @icon         https://mangaplaza.com/favicon.ico
+// @homepageURL  https://github.com/ema28pro/manga-downloaders
+// @supportURL   https://github.com/ema28pro/manga-downloaders/issues
+// @downloadURL  https://raw.githubusercontent.com/ema28pro/manga-downloaders/main/mangaplazadownloader.js
+// @updateURL    https://raw.githubusercontent.com/ema28pro/manga-downloaders/main/mangaplazadownloader.js
 // @match        https://mangaplaza.com/*
 // @match        https://*.mangaplaza.com/*
 // @require      https://unpkg.com/axios@0.27.2/dist/axios.min.js
 // @require      https://unpkg.com/jszip@3.7.1/dist/jszip.min.js
 // @require      https://unpkg.com/file-saver@2.0.5/dist/FileSaver.min.js
-// @require      https://update.greasyfork.org/scripts/451810/1398192/ImageDownloaderLib.js
+// @require      https://update.greasyfork.org/scripts/451810/ImageDownloaderLib.js
 // @grant        GM_info
 // @grant        GM_xmlhttpRequest
 // ==/UserScript==
@@ -21,21 +25,19 @@
 
   let initialized = false;
   const checkAndInit = () => {
-    let pageEls = Array.from(document.querySelectorAll('.rpage-page, .page-container, .reader-page, [data-page], .viewer-page'));
-    if (pageEls.length === 0) {
-      pageEls = Array.from(document.querySelectorAll('main img, #reader img, .reader img'));
-    }
+    const pageEls = Array.from(document.querySelectorAll('.viewer-page, [class*="viewer-page"], .page-img'));
     if (pageEls.length > 0 && !initialized) {
       initialized = true;
-      const title = document.title.replace(/\|.*/, '').trim() || 'MangaPlaza';
-
       ImageDownloader.init({
         maxImageAmount: pageEls.length,
-        title: title,
+        title: document.title.replace(/\|.*/, '').trim() || 'MangaPlaza',
         getImagePromises: (startNum, endNum) => {
           const promises = [];
           for (let i = startNum - 1; i < endNum; i++) {
-            promises.push(getPageImageData(pageEls[i]));
+            promises.push(getPageImageData(pageEls[i])
+              .then(ImageDownloader.fulfillHandler)
+              .catch(ImageDownloader.rejectHandler)
+            );
           }
           return promises;
         }
@@ -86,8 +88,18 @@
       GM_xmlhttpRequest({
         method: 'GET',
         url: url,
+        headers: {
+          'Referer': window.location.href,
+          'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8'
+        },
         responseType: 'arraybuffer',
-        onload: res => resolve(res.response),
+        onload: res => {
+          if (res.status === 200 && res.response && res.response.byteLength > 1000) {
+            resolve(res.response);
+          } else {
+            reject(new Error(`Failed to fetch image (status ${res.status})`));
+          }
+        },
         onerror: err => reject(err)
       });
     });

@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         MangaDexUserScript
-// @namespace    https://github.com/Timesient/manga-download-scripts
+// @namespace    https://github.com/ema28pro/manga-downloaders
 // @version      2.2
 // @license      GPL-3.0
 // @author       ema28pro

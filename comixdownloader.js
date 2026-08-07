@@ -1,17 +1,21 @@
 // ==UserScript==
 // @name         ComixDownloader
-// @namespace    https://github.com/Timesient/manga-download-scripts
+// @namespace    https://github.com/ema28pro/manga-downloaders
 // @version      1.1
 // @license      GPL-3.0
-// @author       Timesient
+// @author       ema28pro
 // @description  Manga downloader for comix.to
 // @icon         https://comix.to/favicon.ico
+// @homepageURL  https://github.com/ema28pro/manga-downloaders
+// @supportURL   https://github.com/ema28pro/manga-downloaders/issues
+// @downloadURL  https://raw.githubusercontent.com/ema28pro/manga-downloaders/main/comixdownloader.js
+// @updateURL    https://raw.githubusercontent.com/ema28pro/manga-downloaders/main/comixdownloader.js
 // @match        https://comix.to/*
 // @match        https://*.comix.to/*
 // @require      https://unpkg.com/axios@0.27.2/dist/axios.min.js
 // @require      https://unpkg.com/jszip@3.7.1/dist/jszip.min.js
 // @require      https://unpkg.com/file-saver@2.0.5/dist/FileSaver.min.js
-// @require      https://update.greasyfork.org/scripts/451810/1398192/ImageDownloaderLib.js
+// @require      https://update.greasyfork.org/scripts/451810/ImageDownloaderLib.js
 // @grant        GM_info
 // @grant        GM_xmlhttpRequest
 // ==/UserScript==

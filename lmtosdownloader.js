@@ -1,17 +1,21 @@
 // ==UserScript==
 // @name         LMTOSDownloader
-// @namespace    https://github.com/Timesient/manga-download-scripts
+// @namespace    https://github.com/ema28pro/manga-downloaders
 // @version      1.0
 // @license      GPL-3.0
-// @author       Timesient
+// @author       ema28pro
 // @description  Manga downloader for lmtos.net
 // @icon         https://lmtos.net/favicon.ico
+// @homepageURL  https://github.com/ema28pro/manga-downloaders
+// @supportURL   https://github.com/ema28pro/manga-downloaders/issues
+// @downloadURL  https://raw.githubusercontent.com/ema28pro/manga-downloaders/main/lmtosdownloader.js
+// @updateURL    https://raw.githubusercontent.com/ema28pro/manga-downloaders/main/lmtosdownloader.js
 // @match        https://lmtos.net/*
 // @match        https://*.lmtos.net/*
 // @require      https://unpkg.com/axios@0.27.2/dist/axios.min.js
 // @require      https://unpkg.com/jszip@3.7.1/dist/jszip.min.js
 // @require      https://unpkg.com/file-saver@2.0.5/dist/FileSaver.min.js
-// @require      https://update.greasyfork.org/scripts/451810/1398192/ImageDownloaderLib.js
+// @require      https://update.greasyfork.org/scripts/451810/ImageDownloaderLib.js
 // @grant        GM_info
 // @grant        GM_xmlhttpRequest
 // ==/UserScript==
