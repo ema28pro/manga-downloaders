@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MangaDexDownloader
 // @namespace    https://github.com/Timesient/manga-download-scripts
-// @version      1.0
+// @version      1.1
 // @license      GPL-3.0
 // @author       Timesient
 // @description  Manga downloader for mangadex.org
@@ -40,8 +40,8 @@
           for (let i = startNum - 1; i < endNum; i++) {
             promises.push(
               getPageImage(pageEls[i])
-                .then(ImageDownloader.fulfillHandler)
-                .catch(ImageDownloader.rejectHandler)
+                .then(data => typeof ImageDownloader.fulfillHandler === 'function' ? ImageDownloader.fulfillHandler(data) : data)
+                .catch(err => typeof ImageDownloader.rejectHandler === 'function' ? ImageDownloader.rejectHandler(err) : Promise.reject(err))
             );
           }
           return promises;
