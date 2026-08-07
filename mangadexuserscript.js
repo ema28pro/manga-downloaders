@@ -1,10 +1,10 @@
 // ==UserScript==
 // @name         MangaDexUserScript
 // @namespace    https://github.com/Timesient/manga-download-scripts
-// @version      2.1
+// @version      2.2
 // @license      GPL-3.0
 // @author       ema28pro
-// @description  Standalone Manga Downloader for MangaDex using official API
+// @description  Standalone Manga Downloader for MangaDex using official API (api.mangadex.org). Based on HakuNeko and MangaDexDownloaderCompiler.
 // @icon         https://mangadex.org/favicon.ico
 // @homepageURL  https://github.com/ema28pro/manga-downloaders
 // @supportURL   https://github.com/ema28pro/manga-downloaders/issues
@@ -64,7 +64,7 @@
     currentChapterId = chapterId;
 
     try {
-      // 1. Fetch chapter At-Home server data from official API
+      // 1. Fetch chapter At-Home server data from official API (api.mangadex.org)
       const atHomeRes = await axios.get(`https://api.mangadex.org/at-home/server/${chapterId}`);
       const baseUrl = atHomeRes.data.baseUrl;
       const hash = atHomeRes.data.chapter.hash;
