@@ -1,39 +1,31 @@
-# 📚 Manga Downloaders
+# manga-downloaders
 
-Colección de scripts de usuario (Userscripts) independientes para Tampermonkey / Violentmonkey que permiten descargar capítulos completos de manga en formato `.zip`.
+Userscripts independientes para descargar capítulos de manga completos en formato ZIP desde el navegador.
 
-## 🚀 Scripts Disponibles
+## Scripts
 
-| Sitio Web | Userscript | Enlace de Instalación Directa |
-| :--- | :--- | :--- |
-| **MangaDex** | `mangadexuserscript.js` | [Instalar Script](https://raw.githubusercontent.com/ema28pro/manga-downloaders/main/mangadexuserscript.js) |
-| **MangaFire** | `mangafiredownloader.js` | [Instalar Script](https://raw.githubusercontent.com/ema28pro/manga-downloaders/main/mangafiredownloader.js) |
-| **Comix** | `comixdownloader.js` | [Instalar Script](https://raw.githubusercontent.com/ema28pro/manga-downloaders/main/comixdownloader.js) |
-| **LMTOS** | `lmtosdownloader.js` | [Instalar Script](https://raw.githubusercontent.com/ema28pro/manga-downloaders/main/lmtosdownloader.js) |
-| **MangaPlaza** | `mangaplazadownloader.js` | [Instalar Script](https://raw.githubusercontent.com/ema28pro/manga-downloaders/main/mangaplazadownloader.js) |
+| Dominio | Script | Enlace directo |
+|---|---|---|
+| mangadex.org | `mangadexuserscript.js` | [Instalar](https://raw.githubusercontent.com/ema28pro/manga-downloaders/main/mangadexuserscript.js) |
+| mangafire.to | `mangafiredownloader.js` | [Instalar](https://raw.githubusercontent.com/ema28pro/manga-downloaders/main/mangafiredownloader.js) |
+| comix.to | `comixdownloader.js` | [Instalar](https://raw.githubusercontent.com/ema28pro/manga-downloaders/main/comixdownloader.js) |
+| lmtos.net | `lmtosdownloader.js` | [Instalar](https://raw.githubusercontent.com/ema28pro/manga-downloaders/main/lmtosdownloader.js) |
+| mangaplaza.com | `mangaplazadownloader.js` | [Instalar](https://raw.githubusercontent.com/ema28pro/manga-downloaders/main/mangaplazadownloader.js) |
 
----
+## Instalación
 
-## 🛠️ Requisitos e Instalación
+1. Tener instalado Tampermonkey o Violentmonkey.
+2. Hacer clic en el enlace de instalación del sitio deseado.
+3. Confirmar la instalación en el gestor.
+4. Abrir cualquier capítulo en el sitio compatible.
 
-1. Instala un gestor de Userscripts en tu navegador:
-   - [Tampermonkey](https://www.tampermonkey.net/) (Recomendado)
-   - [Violentmonkey](https://violentmonkey.github.io/)
-2. Haz clic en el enlace de **Instalar Script** del sitio que desees descargar.
-3. El administrador de Userscripts abrirá automáticamente la pantalla de confirmación. Haz clic en **Instalar**.
-4. Visita cualquier capítulo del manga en el sitio correspondiente y aparecerá la interfaz flotante para descargar el capítulo completo en `.zip`.
+## Detalles técnicos
 
----
+- **MangaDex**: Usa la API oficial (`api.mangadex.org/at-home/server/`). Evita raspado de DOM y problemas con CSP o TrustedTypes.
+- **MangaFire / LMTOS**: Implementan trigger de scroll automático sobre contenedores de imágenes para forzar la carga bajo demanda (*lazy loading* / *virtual scroll*).
+- **Procesamiento de imágenes**: Las peticiones de red usan `GM_xmlhttpRequest` con cabeceras `Referer` adecuadas para evitar bloqueos por CDN y respuestas de error de 5KB.
+- **Empaquetado**: Comprime las páginas a un archivo ZIP con `JSZip` y fuerza la descarga con `FileSaver`.
 
-## ✨ Características Principales
+## Licencia
 
-- **Empaquetado en `.zip`**: Descarga todas las imágenes del capítulo en segundo plano utilizando `JSZip` y las guarda automáticamente en tu equipo.
-- **Soporte para API Oficial (MangaDex)**: `MangaDexUserScript` consulta directamente los servidores de `api.mangadex.org`, garantizando descargas ultrarrápidas en la máxima resolución original e inmunes a restricciones de CSP/TrustedTypes.
-- **Manejo de Virtual Scroll y Lazy Loading**: `mangafiredownloader.js` y `lmtosdownloader.js` fuerzan el renderizado y carga bajo demanda para asegurar que no quede ninguna página vacía.
-- **Validación y Cabeceras de Red**: Incorpora cabeceras `Referer` y comprobación de integridad para evitar archivos corruptos.
-
----
-
-## 📜 Licencia
-
-Distribuido bajo la licencia [GPL-3.0](LICENSE).
+GPL-3.0
