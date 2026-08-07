@@ -10,6 +10,7 @@ Userscripts independientes para descargar capítulos de manga completos en forma
 | mangafire.to | `mangafiredownloader.js` | [Instalar](https://raw.githubusercontent.com/ema28pro/manga-downloaders/main/mangafiredownloader.js) |
 | comix.to | `comixdownloader.js` | [Instalar](https://raw.githubusercontent.com/ema28pro/manga-downloaders/main/comixdownloader.js) |
 | lmtos.net | `lmtosdownloader.js` | [Instalar](https://raw.githubusercontent.com/ema28pro/manga-downloaders/main/lmtosdownloader.js) |
+| weloma.net | `welomadownloader.js` | [Instalar](https://raw.githubusercontent.com/ema28pro/manga-downloaders/main/welomadownloader.js) |
 | mangaplaza.com | `mangaplazadownloader.js` | [Instalar](https://raw.githubusercontent.com/ema28pro/manga-downloaders/main/mangaplazadownloader.js) |
 
 ## Instalación
@@ -22,6 +23,7 @@ Userscripts independientes para descargar capítulos de manga completos en forma
 ## Detalles técnicos
 
 - **MangaDex**: Usa la API oficial (`api.mangadex.org/at-home/server/`). Evita raspado de DOM y problemas con CSP o TrustedTypes.
+- **Weloma**: Decodifica URLs codificadas en Base64 (`data-img`) y extrae las imágenes sin necesidad de forzar el renderizado secuencial.
 - **MangaFire / LMTOS**: Implementan trigger de scroll automático sobre contenedores de imágenes para forzar la carga bajo demanda (*lazy loading* / *virtual scroll*).
 - **Procesamiento de imágenes**: Las peticiones de red usan `GM_xmlhttpRequest` con cabeceras `Referer` adecuadas para evitar bloqueos por CDN y respuestas de error de 5KB.
 - **Empaquetado**: Comprime las páginas a un archivo ZIP con `JSZip` y fuerza la descarga con `FileSaver`.
