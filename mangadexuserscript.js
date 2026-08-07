@@ -3,7 +3,7 @@
 // @namespace    https://github.com/Timesient/manga-download-scripts
 // @version      2.1
 // @license      GPL-3.0
-// @author       Timesient
+// @author       ema28pro
 // @description  Standalone Manga Downloader for MangaDex using official API
 // @icon         https://mangadex.org/favicon.ico
 // @homepageURL  https://github.com/ema28pro/manga-downloaders
