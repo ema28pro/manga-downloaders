@@ -1,11 +1,15 @@
 // ==UserScript==
 // @name         MangaDexUserScript
 // @namespace    https://github.com/Timesient/manga-download-scripts
-// @version      2.0
+// @version      2.1
 // @license      GPL-3.0
 // @author       Timesient
 // @description  Standalone Manga Downloader for MangaDex using official API
 // @icon         https://mangadex.org/favicon.ico
+// @homepageURL  https://github.com/ema28pro/manga-downloaders
+// @supportURL   https://github.com/ema28pro/manga-downloaders/issues
+// @downloadURL  https://raw.githubusercontent.com/ema28pro/manga-downloaders/main/mangadexuserscript.js
+// @updateURL    https://raw.githubusercontent.com/ema28pro/manga-downloaders/main/mangadexuserscript.js
 // @match        https://mangadex.org/chapter/*
 // @match        https://*.mangadex.org/chapter/*
 // @require      https://unpkg.com/axios@0.27.2/dist/axios.min.js
@@ -18,6 +22,36 @@
 
 (async function(axios, JSZip, saveAs, ImageDownloader) {
   'use strict';
+
+  // Bypass TrustedTypes TrustedHTML restriction on MangaDex
+  if (typeof window !== 'undefined' && window.trustedTypes) {
+    try {
+      if (!window.trustedTypes.defaultPolicy) {
+        window.trustedTypes.createPolicy('default', {
+          createHTML: string => string,
+          createScript: string => string,
+          createScriptURL: url => url
+        });
+      }
+    } catch (e) {
+      // If default policy exists or creation blocked, patch innerHTML setter safely
+      try {
+        const desc = Object.getOwnPropertyDescriptor(Element.prototype, 'innerHTML');
+        if (desc && desc.set) {
+          const origSet = desc.set;
+          const policy = window.trustedTypes.createPolicy('mdInnerHtmlPolicy', { createHTML: s => s });
+          Object.defineProperty(Element.prototype, 'innerHTML', {
+            set: function(val) {
+              return origSet.call(this, typeof val === 'string' && policy ? policy.createHTML(val) : val);
+            },
+            get: desc.get,
+            configurable: true,
+            enumerable: true
+          });
+        }
+      } catch (err) {}
+    }
+  }
 
   let currentChapterId = '';
 
