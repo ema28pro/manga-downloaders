@@ -28,12 +28,18 @@
   let initialized = false;
 
   const checkAndInit = () => {
-    let pageEls = Array.from(document.querySelectorAll('#chapter-images img.chapter-img, .chapter-content img.chapter-img, #chapter-images img'));
+    if (!document.body) return;
+
+    let pageEls = Array.from(document.querySelectorAll('#chapter-images img.chapter-img, .chapter-content img.chapter-img, #chapter-images img, .chapter-content img, img.chapter-img'));
+
+    // Filter out tiny ad icons or non-manga images if needed (manga images have data-img or chapter-img class or are inside #chapter-images)
+    pageEls = pageEls.filter(img => img.classList.contains('chapter-img') || img.hasAttribute('data-img') || img.closest('#chapter-images'));
 
     if (pageEls.length > 0 && !initialized) {
       initialized = true;
 
       const title = getTitle();
+      console.log(`[WelomaDownloader] Found ${pageEls.length} chapter images. Initializing UI panel...`);
 
       ImageDownloader.init({
         maxImageAmount: pageEls.length,
