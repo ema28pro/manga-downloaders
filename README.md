@@ -24,6 +24,7 @@ Userscripts independientes para descargar capítulos de manga completos en forma
 
 - **MangaDex**: Usa la API oficial (`api.mangadex.org/at-home/server/`). Evita raspado de DOM y problemas con CSP o TrustedTypes.
 - **Weloma**: Decodifica URLs codificadas en Base64 (`data-img`) y extrae las imágenes sin necesidad de forzar el renderizado secuencial.
+- **Comix.to**: Soporta modo tira vertical (long-strip) y modo de visualización Swiper página por página (LTR/RTL/single/double). Emula el click en la barra de progreso (`.rpage-progress__seg`) para montar dinámicamente las páginas no renderizadas y reintenta las peticiones para evitar archivos corruptos de 1KB.
 - **MangaFire / LMTOS**: Implementan trigger de scroll automático sobre contenedores de imágenes para forzar la carga bajo demanda (*lazy loading* / *virtual scroll*).
 - **Procesamiento de imágenes**: Las peticiones de red usan `GM_xmlhttpRequest` con cabeceras `Referer` adecuadas para evitar bloqueos por CDN y respuestas de error de 5KB.
 - **Empaquetado**: Comprime las páginas a un archivo ZIP con `JSZip` y fuerza la descarga con `FileSaver`.
