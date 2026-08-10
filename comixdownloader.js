@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ComixDownloader
 // @namespace    https://github.com/ema28pro/manga-downloaders
-// @version      1.2
+// @version      1.3
 // @license      GPL-3.0
 // @author       ema28pro
 // @description  Manga downloader for comix.to (Supports single page, double page, LTR/RTL and long strip modes)
@@ -24,6 +24,14 @@
   'use strict';
 
   let initialized = false;
+  let navLock = Promise.resolve();
+
+  // Sequential navigation lock to prevent concurrent Swiper click collisions
+  function withNavLock(fn) {
+    const next = navLock.then(() => fn());
+    navLock = next.catch(() => {});
+    return next;
+  }
 
   const checkAndInit = () => {
     if (!document.body) return;
@@ -60,7 +68,7 @@
         } catch (e) {}
       }
 
-      console.log(`[ComixDownloader] Initialized with ${totalPages} total pages.`);
+      console.log(`[ComixDownloader] Initialized successfully. Total pages found: ${totalPages}`);
 
       ImageDownloader.init({
         maxImageAmount: totalPages,
@@ -71,8 +79,14 @@
             const pageNum = i + 1;
             promises.push(
               getPageImageData(pageNum)
-                .then(ImageDownloader.fulfillHandler)
-                .catch(ImageDownloader.rejectHandler)
+                .then(res => {
+                  console.log(`[ComixDownloader] Page ${pageNum}/${totalPages}: Successfully processed (${res.byteLength} bytes).`);
+                  return ImageDownloader.fulfillHandler(res);
+                })
+                .catch(err => {
+                  console.error(`[ComixDownloader] Page ${pageNum}/${totalPages}: FAILED ->`, err);
+                  return ImageDownloader.rejectHandler(err);
+                })
             );
           }
           return promises;
@@ -86,77 +100,96 @@
   window.addEventListener('popstate', () => { initialized = false; });
 
   async function getPageImageData(pageNum) {
-    // 1. Try to find the page element by data-page="X" attribute
-    let pageEl = document.querySelector(`.rpage-page[data-page="${pageNum}"]`);
+    console.log(`[ComixDownloader] Page ${pageNum}: Requesting page data...`);
+    let imageUrl = null;
+    let canvasData = null;
 
-    // 2. Find progress segment button (by title, aria-label, or nth-child index)
-    const segBtn = document.querySelector(`.rpage-progress__seg[title="Page ${pageNum}"], .rpage-progress__seg[aria-label="Go to page ${pageNum}"], .rpage-progress .rpage-progress__seg:nth-child(${pageNum})`);
+    // Use navLock to safely navigate Swiper without concurrent click collisions
+    await withNavLock(async () => {
+      let pageEl = document.querySelector(`.rpage-page[data-page="${pageNum}"]`);
+      let img = pageEl ? (pageEl.tagName === 'IMG' ? pageEl : pageEl.querySelector('img')) : null;
+      let canvas = pageEl ? (pageEl.tagName === 'CANVAS' ? pageEl : pageEl.querySelector('canvas')) : null;
 
-    if (segBtn && !pageEl) {
-      segBtn.click();
-      await new Promise(r => setTimeout(r, 150));
-      pageEl = document.querySelector(`.rpage-page[data-page="${pageNum}"]`);
-    }
+      // If image or canvas is not ready yet, click progress seg button or scroll into view
+      if ((!img || !img.src || !img.src.startsWith('http') || img.src.includes('data:image')) && !canvas) {
+        const segBtn = document.querySelector(
+          `.rpage-progress__seg[title="Page ${pageNum}"], .rpage-progress__seg[aria-label="Go to page ${pageNum}"], .rpage-progress .rpage-progress__seg:nth-child(${pageNum})`
+        );
 
-    if (pageEl && pageEl.scrollIntoView) {
-      pageEl.scrollIntoView({ block: 'center', inline: 'center' });
-    }
-
-    // 3. Poll up to 40 attempts (8 seconds total) for img tag or canvas
-    for (let attempt = 0; attempt < 40; attempt++) {
-      if (!pageEl) {
-        pageEl = document.querySelector(`.rpage-page[data-page="${pageNum}"]`);
-      }
-
-      if (pageEl) {
-        const img = pageEl.tagName === 'IMG' ? pageEl : pageEl.querySelector('img');
-        if (img && img.src && img.src.startsWith('http') && !img.src.includes('data:image')) {
-          return fetchImageWithRetry(img.src);
-        }
-
-        const canvas = pageEl.tagName === 'CANVAS' ? pageEl : pageEl.querySelector('canvas');
-        if (canvas) {
-          const dataUrl = canvas.toDataURL('image/png');
-          const base64Data = dataUrl.replace(/^data:image\/\w+;base64,/, '');
-          const binaryStr = atob(base64Data);
-          const len = binaryStr.length;
-          const bytes = new Uint8Array(len);
-          for (let i = 0; i < len; i++) {
-            bytes[i] = binaryStr.charCodeAt(i);
-          }
-          if (bytes.buffer.byteLength > 1000) {
-            return bytes.buffer;
-          }
-        }
-      }
-
-      // If page is still unmounted or loading, click progress seg every 5 attempts to trigger Swiper/virtual mount
-      if (attempt % 5 === 0 && segBtn) {
-        segBtn.click();
-        if (pageEl && pageEl.scrollIntoView) {
+        if (segBtn) {
+          console.log(`[ComixDownloader] Page ${pageNum}: Navigating via segment button...`);
+          segBtn.click();
+        } else if (pageEl && pageEl.scrollIntoView) {
+          console.log(`[ComixDownloader] Page ${pageNum}: Scrolling into view...`);
           pageEl.scrollIntoView({ block: 'center', inline: 'center' });
         }
+
+        // Wait up to 5 seconds for Swiper / DOM to mount the page image or canvas
+        for (let attempt = 0; attempt < 50; attempt++) {
+          await new Promise(r => setTimeout(r, 100));
+          pageEl = document.querySelector(`.rpage-page[data-page="${pageNum}"]`);
+          if (pageEl) {
+            img = pageEl.tagName === 'IMG' ? pageEl : pageEl.querySelector('img');
+            canvas = pageEl.tagName === 'CANVAS' ? pageEl : pageEl.querySelector('canvas');
+            if ((img && img.src && img.src.startsWith('http') && !img.src.includes('data:image')) || canvas) {
+              break;
+            }
+          }
+          if (attempt === 25 && segBtn) {
+            // Re-trigger click if taking longer
+            console.log(`[ComixDownloader] Page ${pageNum}: Re-triggering segment click...`);
+            segBtn.click();
+          }
+        }
       }
 
-      await new Promise(r => setTimeout(r, 200));
+      if (img && img.src && img.src.startsWith('http') && !img.src.includes('data:image')) {
+        imageUrl = img.src;
+        console.log(`[ComixDownloader] Page ${pageNum}: Found image URL -> ${imageUrl}`);
+      } else if (canvas) {
+        console.log(`[ComixDownloader] Page ${pageNum}: Found canvas element.`);
+        canvasData = canvas.toDataURL('image/png');
+      }
+    });
+
+    // 1. Process canvas if present
+    if (canvasData) {
+      const base64Data = canvasData.replace(/^data:image\/\w+;base64,/, '');
+      const binaryStr = atob(base64Data);
+      const len = binaryStr.length;
+      const bytes = new Uint8Array(len);
+      for (let i = 0; i < len; i++) {
+        bytes[i] = binaryStr.charCodeAt(i);
+      }
+      if (bytes.buffer.byteLength > 1000) {
+        return bytes.buffer;
+      }
     }
 
-    throw new Error(`Timeout loading image for page ${pageNum}`);
+    // 2. Fetch image URL with retry logic
+    if (imageUrl) {
+      return fetchImageWithRetry(pageNum, imageUrl);
+    }
+
+    throw new Error(`Timeout waiting for DOM mount or image source for page ${pageNum}`);
   }
 
-  async function fetchImageWithRetry(url, retries = 3) {
-    for (let i = 0; i < retries; i++) {
+  async function fetchImageWithRetry(pageNum, url, retries = 4) {
+    for (let attempt = 1; attempt <= retries; attempt++) {
       try {
+        console.log(`[ComixDownloader] Page ${pageNum}: Downloading image binary (Attempt ${attempt}/${retries})...`);
         const data = await fetchImageBuffer(url);
         if (data && data.byteLength > 1000) {
           return data;
         }
+        console.warn(`[ComixDownloader] Page ${pageNum}: Received incomplete image payload (${data ? data.byteLength : 0} bytes). Retrying...`);
       } catch (e) {
-        if (i === retries - 1) throw e;
+        console.warn(`[ComixDownloader] Page ${pageNum}: Attempt ${attempt} failed -> ${e.message}`);
+        if (attempt === retries) throw e;
       }
-      await new Promise(r => setTimeout(r, 500));
+      await new Promise(r => setTimeout(r, 600 * attempt));
     }
-    throw new Error(`Failed to fetch image data for ${url}`);
+    throw new Error(`Failed to fetch valid image data for page ${pageNum}`);
   }
 
   function fetchImageBuffer(url) {
