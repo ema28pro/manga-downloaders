@@ -100,19 +100,42 @@
   setInterval(checkAndInit, 1500);
   window.addEventListener('popstate', () => { initialized = false; });
 
+  function extractPageMedia(pageEl) {
+    if (!pageEl) return null;
+    const img = pageEl.tagName === 'IMG' ? pageEl : pageEl.querySelector('img');
+    if (img && img.src && img.src.startsWith('http') && !img.src.includes('data:image')) {
+      return { type: 'url', url: img.src };
+    }
+    const canvas = pageEl.tagName === 'CANVAS' ? pageEl : pageEl.querySelector('canvas');
+    if (canvas && canvas.width > 10 && canvas.height > 10) {
+      try {
+        const dataUrl = canvas.toDataURL('image/png');
+        const base64Data = dataUrl.replace(/^data:image\/\w+;base64,/, '');
+        const binaryStr = atob(base64Data);
+        const len = binaryStr.length;
+        if (len > 1000) {
+          const bytes = new Uint8Array(len);
+          for (let i = 0; i < len; i++) {
+            bytes[i] = binaryStr.charCodeAt(i);
+          }
+          return { type: 'buffer', buffer: bytes.buffer };
+        }
+      } catch (e) {}
+    }
+    return null;
+  }
+
   async function getPageImageData(pageNum) {
     console.log(`[ComixDownloader v${VERSION}] Page ${pageNum}: Requesting page data...`);
-    let imageUrl = null;
-    let canvasData = null;
+    let mediaResult = null;
 
     // Use navLock to safely navigate Swiper without concurrent click collisions
     await withNavLock(async () => {
       let pageEl = document.querySelector(`.rpage-page[data-page="${pageNum}"]`);
-      let img = pageEl ? (pageEl.tagName === 'IMG' ? pageEl : pageEl.querySelector('img')) : null;
-      let canvas = pageEl ? (pageEl.tagName === 'CANVAS' ? pageEl : pageEl.querySelector('canvas')) : null;
+      mediaResult = extractPageMedia(pageEl);
 
-      // If image or canvas is not ready yet, click progress seg button or scroll into view
-      if ((!img || !img.src || !img.src.startsWith('http') || img.src.includes('data:image')) && !canvas) {
+      // If image or canvas media is not ready yet, click progress seg button or scroll into view
+      if (!mediaResult) {
         const segBtn = document.querySelector(
           `.rpage-progress__seg[title="Page ${pageNum}"], .rpage-progress__seg[aria-label="Go to page ${pageNum}"], .rpage-progress .rpage-progress__seg:nth-child(${pageNum})`
         );
@@ -125,16 +148,13 @@
           pageEl.scrollIntoView({ block: 'center', inline: 'center' });
         }
 
-        // Wait up to 5 seconds for Swiper / DOM to mount the page image or canvas
-        for (let attempt = 0; attempt < 50; attempt++) {
+        // Wait up to 6 seconds for Swiper / DOM to render the page image or valid canvas
+        for (let attempt = 0; attempt < 60; attempt++) {
           await new Promise(r => setTimeout(r, 100));
           pageEl = document.querySelector(`.rpage-page[data-page="${pageNum}"]`);
-          if (pageEl) {
-            img = pageEl.tagName === 'IMG' ? pageEl : pageEl.querySelector('img');
-            canvas = pageEl.tagName === 'CANVAS' ? pageEl : pageEl.querySelector('canvas');
-            if ((img && img.src && img.src.startsWith('http') && !img.src.includes('data:image')) || canvas) {
-              break;
-            }
+          mediaResult = extractPageMedia(pageEl);
+          if (mediaResult) {
+            break;
           }
           if (attempt === 25 && segBtn) {
             // Re-trigger click if taking longer
@@ -144,32 +164,22 @@
         }
       }
 
-      if (img && img.src && img.src.startsWith('http') && !img.src.includes('data:image')) {
-        imageUrl = img.src;
-        console.log(`[ComixDownloader v${VERSION}] Page ${pageNum}: Found image URL -> ${imageUrl}`);
-      } else if (canvas) {
-        console.log(`[ComixDownloader v${VERSION}] Page ${pageNum}: Found canvas element.`);
-        canvasData = canvas.toDataURL('image/png');
+      if (mediaResult) {
+        if (mediaResult.type === 'url') {
+          console.log(`[ComixDownloader v${VERSION}] Page ${pageNum}: Found image URL -> ${mediaResult.url}`);
+        } else if (mediaResult.type === 'buffer') {
+          console.log(`[ComixDownloader v${VERSION}] Page ${pageNum}: Captured rendered canvas (${mediaResult.buffer.byteLength} bytes).`);
+        }
       }
     });
 
-    // 1. Process canvas if present
-    if (canvasData) {
-      const base64Data = canvasData.replace(/^data:image\/\w+;base64,/, '');
-      const binaryStr = atob(base64Data);
-      const len = binaryStr.length;
-      const bytes = new Uint8Array(len);
-      for (let i = 0; i < len; i++) {
-        bytes[i] = binaryStr.charCodeAt(i);
+    if (mediaResult) {
+      if (mediaResult.type === 'buffer') {
+        return mediaResult.buffer;
       }
-      if (bytes.buffer.byteLength > 1000) {
-        return bytes.buffer;
+      if (mediaResult.type === 'url') {
+        return fetchImageWithRetry(pageNum, mediaResult.url);
       }
-    }
-
-    // 2. Fetch image URL with retry logic
-    if (imageUrl) {
-      return fetchImageWithRetry(pageNum, imageUrl);
     }
 
     throw new Error(`Timeout waiting for DOM mount or image source for page ${pageNum}`);
