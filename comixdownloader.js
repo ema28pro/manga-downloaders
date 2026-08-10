@@ -1,10 +1,10 @@
 // ==UserScript==
 // @name         ComixDownloader
 // @namespace    https://github.com/ema28pro/manga-downloaders
-// @version      7.5
+// @version      7.6
 // @license      GPL-3.0
 // @author       ema28pro
-// @description  Manga downloader for comix.to (Guaranteed Valid PNG Output for Photoshop Compatibility)
+// @description  Manga downloader for comix.to (Multi-Strategy Robust DOM & API Extraction)
 // @icon         https://comix.to/favicon.ico
 // @homepageURL  https://github.com/ema28pro/manga-downloaders
 // @supportURL   https://github.com/ema28pro/manga-downloaders/issues
@@ -25,7 +25,7 @@
 (function(JSZip, saveAs, ImageDownloader) {
   'use strict';
 
-  const VERSION = '7.5';
+  const VERSION = '7.6';
   let initialized = false;
   let currentUrl = location.href;
 
@@ -512,20 +512,37 @@
       if (segBtn) try { segBtn.click(); } catch (_) {}
     }
 
-    for (let attempt = 0; attempt < 35; attempt++) {
+    for (let attempt = 0; attempt < 45; attempt++) {
+      // 1. Broad element selection matching pageNum attribute or index
       let pageEl = document.querySelector(`[data-page="${pageNum}"]`) ||
-                   document.querySelectorAll('.rpage-page, .swiper-slide, .rpage-slide')[pageNum - 1];
+                   document.querySelector(`.rpage-page[data-page="${pageNum}"]`);
+
+      if (!pageEl) {
+        const allPages = document.querySelectorAll('.rpage-page, .swiper-slide, .rpage-slide');
+        if (allPages[pageNum - 1]) pageEl = allPages[pageNum - 1];
+      }
 
       if (pageEl && pageEl.scrollIntoView) {
         try { pageEl.scrollIntoView({ block: 'center', behavior: 'instant' }); } catch (_) {}
       }
 
-      if (pageEl) {
-        const img = pageEl.tagName === 'IMG' ? pageEl : pageEl.querySelector('img');
-        if (img?.src && img.src.startsWith('http') && !img.src.includes('data:image')) {
-          console.log(`[ComixDownloader v${VERSION}] Page ${pageNum}: Found DOM <img> -> ${img.src}`);
-          return await fetchImageBuffer(pageNum, img.src, scrambleInfo);
+      // 2. Extract image from page element or fallback to global image query matching pageNum
+      let img = pageEl ? (pageEl.tagName === 'IMG' ? pageEl : pageEl.querySelector('img')) : null;
+
+      if (!img || !img.src) {
+        const allImgs = document.querySelectorAll('.rpage-page img, .swiper-slide img, .rpage-slide img, img[data-page]');
+        for (const candidateImg of allImgs) {
+          const parentPage = candidateImg.closest('[data-page]');
+          if (parentPage && parseInt(parentPage.getAttribute('data-page'), 10) === pageNum) {
+            img = candidateImg;
+            break;
+          }
         }
+      }
+
+      if (img?.src && img.src.startsWith('http') && !img.src.includes('data:image')) {
+        console.log(`[ComixDownloader v${VERSION}] Page ${pageNum}: Found DOM <img> -> ${img.src}`);
+        return await fetchImageBuffer(pageNum, img.src, scrambleInfo);
       }
 
       await new Promise(r => setTimeout(r, 150));
