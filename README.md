@@ -24,7 +24,7 @@ Userscripts independientes para descargar capítulos de manga completos en forma
 
 - **MangaDex**: Usa la API oficial (`api.mangadex.org/at-home/server/`). Evita raspado de DOM y problemas con CSP o TrustedTypes.
 - **Weloma**: Decodifica URLs codificadas en Base64 (`data-img`) y extrae las imágenes sin necesidad de forzar el renderizado secuencial.
-- **Comix.to**: Soporta modo tira vertical (long-strip) y modo de visualización Swiper página por página (LTR/RTL/single/double). Emula el click en la barra de progreso (`.rpage-progress__seg`) para montar dinámicamente las páginas no renderizadas y reintenta las peticiones para evitar archivos corruptos de 1KB.
+- **Comix.to**: Soporta modo tira vertical (long-strip) y modo de visualización Swiper página por página (LTR/RTL/single/double). Soporta la extracción de elementos `<canvas>` mediante `CanvasDownloaderLib`, decodificando el buffer de imagen renderizado y previniendo el bloqueo por *tainted canvas* (CORS). Emula el click en la barra de progreso (`.rpage-progress__seg`) para montar dinámicamente las páginas no renderizadas y elimina fallbacks de archivos nulos de 1KB.
 - **MangaFire / LMTOS**: Implementan trigger de scroll automático sobre contenedores de imágenes para forzar la carga bajo demanda (*lazy loading* / *virtual scroll*).
 - **Procesamiento de imágenes**: Las peticiones de red usan `GM_xmlhttpRequest` con cabeceras `Referer` adecuadas para evitar bloqueos por CDN y respuestas de error de 5KB.
 - **Empaquetado**: Comprime las páginas a un archivo ZIP con `JSZip` y fuerza la descarga con `FileSaver`.
@@ -34,6 +34,7 @@ Userscripts independientes para descargar capítulos de manga completos en forma
 Se almacenan copias locales de todas las dependencias externas en la carpeta `lib/` para prevenir fallos en caso de eliminación o caída de CDNs / repositorios de terceros:
 
 - `lib/ImageDownloaderLib.js`: Interfaz de usuario flotante y controlador de descarga.
+- `lib/CanvasDownloaderLib.js`: Helper para extraer buffers de elementos HTML5 Canvas y evitar problemas de CORS/tainting.
 - `lib/axios.min.js`: Cliente HTTP para interacción con APIs.
 - `lib/jszip.min.js`: Generación y compresión de archivos ZIP en memoria.
 - `lib/FileSaver.min.js`: Gestor de descargas nativas del navegador.
@@ -41,3 +42,4 @@ Se almacenan copias locales de todas las dependencias externas en la carpeta `li
 ## Licencia
 
 GPL-3.0
+
