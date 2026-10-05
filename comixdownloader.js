@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ComixDownloader
 // @namespace    https://github.com/ema28pro/manga-downloaders
-// @version      7.9
+// @version      8
 // @license      GPL-3.0
 // @author       ema28pro
 // @description  Manga downloader for comix.to (Multi-Strategy Robust DOM & API Extraction)
@@ -25,7 +25,7 @@
 (function(JSZip, saveAs, ImageDownloader) {
   'use strict';
 
-  const TAG = '[ComixDownloader v7.9]';
+  const TAG = '[ComixDownloader v8]';
 
   // ── Configuración ──────────────────────────────────────────────────────
   const MAX_WORKERS = 8;  // Workers simultáneos para unscramble / conversión a PNG
