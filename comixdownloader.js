@@ -26,6 +26,11 @@
   'use strict';
 
   const TAG = '[ComixDownloader v7.9]';
+
+  // ── Configuración ──────────────────────────────────────────────────────
+  const MAX_WORKERS = 8;  // Workers simultáneos para unscramble / conversión a PNG
+  const MAX_RETRIES = 2;  // Reintentos por página si falla la descarga
+
   let initialized = false;
   let currentUrl = location.href;
 
@@ -281,9 +286,29 @@
     };
   `;
 
+  // Reusable worker pool: at most MAX_WORKERS decoding at once, extra pages wait in line
+  const pool = { url: null, idle: [], total: 0, waiting: [] };
+
+  function spawnWorker() {
+    pool.url ||= URL.createObjectURL(new Blob([WORKER_CODE], { type: 'application/javascript' }));
+    const worker = new Worker(pool.url);
+    pool.total++;
+    return worker;
+  }
+
+  const acquireWorker = () => pool.idle.pop()
+    || (pool.total < MAX_WORKERS ? spawnWorker() : new Promise((resolve, reject) => pool.waiting.push({ resolve, reject })));
+
+  function releaseWorker(worker, broken) {
+    if (broken) { worker.terminate(); pool.total--; worker = null; }
+    const next = pool.waiting.shift();
+    if (!next) { if (worker) pool.idle.push(worker); return; }
+    try { next.resolve(worker || spawnWorker()); } catch (err) { next.reject(err); }
+  }
+
   async function unscrambleInWorker(arrayBuffer, { seed, cols, rows, hash }) {
-    const workerUrl = URL.createObjectURL(new Blob([WORKER_CODE], { type: 'application/javascript' }));
-    const worker = new Worker(workerUrl);
+    const worker = await acquireWorker();
+    let broken = false;
     try {
       return await new Promise((resolve, reject) => {
         worker.onmessage = e => e.data.ok ? resolve(e.data.buffer) : reject(new Error(e.data.error));
@@ -291,9 +316,11 @@
         const copy = arrayBuffer.slice(0);
         worker.postMessage({ buffer: copy, seed, cols, rows, hash }, [copy]);
       });
+    } catch (err) {
+      broken = true; // discard the worker so the next job gets a clean one
+      throw err;
     } finally {
-      URL.revokeObjectURL(workerUrl);
-      worker.terminate();
+      releaseWorker(worker, broken);
     }
   }
 
@@ -302,7 +329,7 @@
     : headers?.get?.(name) || null;
 
   // ── Network fetcher with timeout; GM_xmlhttpRequest as the only fallback ──
-  async function requestImageBinary(pageNum, url) {
+  async function requestImageOnce(pageNum, url) {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 25000);
     try {
@@ -337,6 +364,19 @@
       });
     } finally {
       clearTimeout(timeoutId);
+    }
+  }
+
+  // Retries transient failures (fetch + GM fallback already failed) with a growing delay
+  async function requestImageBinary(pageNum, url) {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await requestImageOnce(pageNum, url);
+      } catch (err) {
+        if (attempt >= MAX_RETRIES) throw err;
+        console.warn(`${TAG} Page ${pageNum}: retry ${attempt + 1}/${MAX_RETRIES} (${err.message})`);
+        await new Promise(r => setTimeout(r, 800 * (attempt + 1)));
+      }
     }
   }
 
