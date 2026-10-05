@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ComixDownloader
 // @namespace    https://github.com/ema28pro/manga-downloaders
-// @version      7.7
+// @version      7.8
 // @license      GPL-3.0
 // @author       ema28pro
 // @description  Manga downloader for comix.to (Multi-Strategy Robust DOM & API Extraction)
@@ -16,6 +16,7 @@
 // @require      https://unpkg.com/jszip@3.7.1/dist/jszip.min.js
 // @require      https://unpkg.com/file-saver@2.0.5/dist/FileSaver.min.js
 // @require      https://update.greasyfork.org/scripts/451810/ImageDownloaderLib.js
+// @connect      *
 // @grant        GM_info
 // @grant        GM_xmlhttpRequest
 // @grant        unsafeWindow
@@ -25,7 +26,7 @@
 (function(JSZip, saveAs, ImageDownloader) {
   'use strict';
 
-  const VERSION = '7.7';
+  const VERSION = '7.8';
   let initialized = false;
   let currentUrl = location.href;
 
@@ -451,37 +452,10 @@
   // ── Network Fetcher (Cloudflare Anti-403 Multi-Tier Bypass) ─────────────
   function requestImageBinary(pageNum, url) {
     return new Promise((resolve, reject) => {
-      // 1. Primary: GM_xmlhttpRequest with anonymous mode (NO Referer to prevent Cloudflare 403 block)
-      GM_xmlhttpRequest({
-        method: 'GET',
-        url,
-        anonymous: true,
-        headers: {
-          'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8'
-        },
-        responseType: 'arraybuffer',
-        onload: r => {
-          if (r.status === 200 && r.response?.byteLength > 1000) {
-            return resolve({
-              buffer: r.response,
-              headers: r.responseHeaders
-            });
-          }
-          console.warn(`[ComixDownloader v${VERSION}] Page ${pageNum}: GM_xmlhttpRequest returned HTTP ${r.status}, falling back to fetch()...`);
-          tryFetchFallback();
-        },
-        onerror: err => {
-          console.warn(`[ComixDownloader v${VERSION}] Page ${pageNum}: GM_xmlhttpRequest network error, falling back to fetch():`, err);
-          tryFetchFallback();
-        }
-      });
+      const fetchFn = typeof window.fetch === 'function' ? window.fetch : unsafeWindow?.fetch;
 
-      function tryFetchFallback() {
-        const fetchFn = typeof window.fetch === 'function' ? window.fetch : unsafeWindow?.fetch;
-        if (!fetchFn) {
-          return reject(new Error(`Page ${pageNum}: GM_xmlhttpRequest failed and window.fetch is unavailable`));
-        }
-
+      // 1. Primary: Native fetch with CORS & no-referrer (Runs purely in page context without Tampermonkey @connect popups)
+      if (fetchFn) {
         fetchFn(url, {
           method: 'GET',
           referrerPolicy: 'no-referrer',
@@ -497,9 +471,40 @@
               headers: res.headers
             });
           })
-          .catch(err => {
-            reject(new Error(`Both GM_xmlhttpRequest and fetch failed for page ${pageNum}: ${err.message}`));
+          .catch(fetchErr => {
+            console.warn(`[ComixDownloader v${VERSION}] Page ${pageNum}: Native fetch failed, trying GM_xmlhttpRequest fallback...`, fetchErr);
+            tryGmFallback();
           });
+      } else {
+        tryGmFallback();
+      }
+
+      function tryGmFallback() {
+        if (typeof GM_xmlhttpRequest !== 'function') {
+          return reject(new Error(`Page ${pageNum}: fetch failed and GM_xmlhttpRequest unavailable`));
+        }
+
+        GM_xmlhttpRequest({
+          method: 'GET',
+          url,
+          anonymous: true,
+          headers: {
+            'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8'
+          },
+          responseType: 'arraybuffer',
+          onload: r => {
+            if (r.status === 200 && r.response?.byteLength > 1000) {
+              return resolve({
+                buffer: r.response,
+                headers: r.responseHeaders
+              });
+            }
+            reject(new Error(`GM_xmlhttpRequest HTTP ${r.status}, ${r.response?.byteLength || 0}B`));
+          },
+          onerror: err => {
+            reject(new Error(`Both fetch and GM_xmlhttpRequest failed for page ${pageNum}: ${err?.message || 'Network error'}`));
+          }
+        });
       }
     });
   }
