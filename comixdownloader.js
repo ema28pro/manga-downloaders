@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ComixDownloader
 // @namespace    https://github.com/ema28pro/manga-downloaders
-// @version      7.6
+// @version      7.7
 // @license      GPL-3.0
 // @author       ema28pro
 // @description  Manga downloader for comix.to (Multi-Strategy Robust DOM & API Extraction)
@@ -25,7 +25,7 @@
 (function(JSZip, saveAs, ImageDownloader) {
   'use strict';
 
-  const VERSION = '7.6';
+  const VERSION = '7.7';
   let initialized = false;
   let currentUrl = location.href;
 
@@ -437,6 +437,10 @@
       return match ? match[1].trim() : null;
     }
     if (typeof headers === 'object') {
+      if (typeof headers.get === 'function') {
+        const val = headers.get(headerName);
+        if (val) return val;
+      }
       for (const key of Object.keys(headers)) {
         if (key.toLowerCase() === headerName.toLowerCase()) return headers[key];
       }
@@ -444,60 +448,100 @@
     return null;
   }
 
-  // ── Image Fetcher & Unscrambler ────────────────────────────────────────
-  function fetchImageBuffer(pageNum, url, directScramble) {
+  // ── Network Fetcher (Cloudflare Anti-403 Multi-Tier Bypass) ─────────────
+  function requestImageBinary(pageNum, url) {
     return new Promise((resolve, reject) => {
-      console.log(`[ComixDownloader v${VERSION}] Page ${pageNum}: Fetching ${url}...`);
+      // 1. Primary: GM_xmlhttpRequest with anonymous mode (NO Referer to prevent Cloudflare 403 block)
       GM_xmlhttpRequest({
         method: 'GET',
         url,
+        anonymous: true,
         headers: {
-          'Referer': 'https://comix.to/',
           'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8'
         },
         responseType: 'arraybuffer',
-        onload: async r => {
+        onload: r => {
           if (r.status === 200 && r.response?.byteLength > 1000) {
-            let seedVal = getHeaderValue(r.responseHeaders, 'x-scramble-seed');
-            let gridVal = getHeaderValue(r.responseHeaders, 'x-scramble-grid');
-            let hashVal = getHeaderValue(r.responseHeaders, 'x-scramble-hash');
-
-            let scrambleInfo = directScramble || scrambleMap.get(pageNum) || scrambleMap.get(url) || scrambleMap.get(url.split('?')[0]) || null;
-
-            if (seedVal && gridVal) {
-              const m = gridVal.match(/(\d+)x(\d+)/i);
-              if (m) {
-                scrambleInfo = {
-                  seed: parseInt(seedVal, 10),
-                  cols: parseInt(m[1], 10),
-                  rows: parseInt(m[2], 10),
-                  hash: hashVal || ''
-                };
-              }
-            }
-
-            const info = scrambleInfo || { seed: 0, cols: 5, rows: 5, hash: '' };
-            if (info.seed > 0) {
-              console.log(`[ComixDownloader v${VERSION}] Page ${pageNum}: Unscrambling image (seed=${info.seed}, ${info.cols}x${info.rows}, hash=${info.hash || 'default'})...`);
-            } else {
-              console.log(`[ComixDownloader v${VERSION}] Page ${pageNum}: Processing image to guaranteed PNG format...`);
-            }
-
-            try {
-              const pngBuf = await unscrambleImageBlob(r.response, info);
-              console.log(`[ComixDownloader v${VERSION}] Page ${pageNum}: PNG generated! Output size: ${pngBuf.byteLength}B`);
-              return resolve(pngBuf);
-            } catch (err) {
-              console.warn(`[ComixDownloader v${VERSION}] Page ${pageNum}: PNG conversion fallback to raw:`, err);
-              return resolve(r.response);
-            }
-          } else {
-            reject(new Error(`HTTP ${r.status}, ${r.response?.byteLength || 0}B`));
+            return resolve({
+              buffer: r.response,
+              headers: r.responseHeaders
+            });
           }
+          console.warn(`[ComixDownloader v${VERSION}] Page ${pageNum}: GM_xmlhttpRequest returned HTTP ${r.status}, falling back to fetch()...`);
+          tryFetchFallback();
         },
-        onerror: reject
+        onerror: err => {
+          console.warn(`[ComixDownloader v${VERSION}] Page ${pageNum}: GM_xmlhttpRequest network error, falling back to fetch():`, err);
+          tryFetchFallback();
+        }
       });
+
+      function tryFetchFallback() {
+        const fetchFn = typeof window.fetch === 'function' ? window.fetch : unsafeWindow?.fetch;
+        if (!fetchFn) {
+          return reject(new Error(`Page ${pageNum}: GM_xmlhttpRequest failed and window.fetch is unavailable`));
+        }
+
+        fetchFn(url, {
+          method: 'GET',
+          referrerPolicy: 'no-referrer',
+          credentials: 'omit',
+          mode: 'cors'
+        })
+          .then(async res => {
+            if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
+            const buf = await res.arrayBuffer();
+            if (!buf || buf.byteLength <= 1000) throw new Error(`Invalid/empty buffer (${buf?.byteLength || 0}B)`);
+            resolve({
+              buffer: buf,
+              headers: res.headers
+            });
+          })
+          .catch(err => {
+            reject(new Error(`Both GM_xmlhttpRequest and fetch failed for page ${pageNum}: ${err.message}`));
+          });
+      }
     });
+  }
+
+  // ── Image Fetcher & Unscrambler ────────────────────────────────────────
+  async function fetchImageBuffer(pageNum, url, directScramble) {
+    console.log(`[ComixDownloader v${VERSION}] Page ${pageNum}: Fetching ${url}...`);
+    const { buffer, headers } = await requestImageBinary(pageNum, url);
+
+    let seedVal = getHeaderValue(headers, 'x-scramble-seed');
+    let gridVal = getHeaderValue(headers, 'x-scramble-grid');
+    let hashVal = getHeaderValue(headers, 'x-scramble-hash');
+
+    let scrambleInfo = directScramble || scrambleMap.get(pageNum) || scrambleMap.get(url) || scrambleMap.get(url.split('?')[0]) || null;
+
+    if (seedVal && gridVal) {
+      const m = gridVal.match(/(\d+)x(\d+)/i);
+      if (m) {
+        scrambleInfo = {
+          seed: parseInt(seedVal, 10),
+          cols: parseInt(m[1], 10),
+          rows: parseInt(m[2], 10),
+          hash: hashVal || ''
+        };
+      }
+    }
+
+    const info = scrambleInfo || { seed: 0, cols: 5, rows: 5, hash: '' };
+    if (info.seed > 0) {
+      console.log(`[ComixDownloader v${VERSION}] Page ${pageNum}: Unscrambling image (seed=${info.seed}, ${info.cols}x${info.rows}, hash=${info.hash || 'default'})...`);
+    } else {
+      console.log(`[ComixDownloader v${VERSION}] Page ${pageNum}: Processing image to guaranteed PNG format...`);
+    }
+
+    try {
+      const pngBuf = await unscrambleImageBlob(buffer, info);
+      console.log(`[ComixDownloader v${VERSION}] Page ${pageNum}: PNG generated! Output size: ${pngBuf.byteLength}B`);
+      return pngBuf;
+    } catch (err) {
+      console.warn(`[ComixDownloader v${VERSION}] Page ${pageNum}: PNG conversion fallback to raw:`, err);
+      return buffer;
+    }
   }
 
   // ── Serialized Mutex for DOM Strategy ──────────────────────────────────
@@ -542,7 +586,30 @@
 
       if (img?.src && img.src.startsWith('http') && !img.src.includes('data:image')) {
         console.log(`[ComixDownloader v${VERSION}] Page ${pageNum}: Found DOM <img> -> ${img.src}`);
-        return await fetchImageBuffer(pageNum, img.src, scrambleInfo);
+        try {
+          return await fetchImageBuffer(pageNum, img.src, scrambleInfo);
+        } catch (fetchErr) {
+          // Extra Fallback: Draw loaded DOM image to canvas if network fetch fails
+          if (img.complete && img.naturalWidth > 0) {
+            console.log(`[ComixDownloader v${VERSION}] Page ${pageNum}: Network fetch failed, capturing DOM <img> via canvas...`);
+            try {
+              const canvas = document.createElement('canvas');
+              canvas.width = img.naturalWidth;
+              canvas.height = img.naturalHeight;
+              const ctx = canvas.getContext('2d');
+              ctx.drawImage(img, 0, 0);
+              const blob = await new Promise(r => canvas.toBlob(r, 'image/png'));
+              if (blob && blob.size > 1000) {
+                const rawBuf = await blob.arrayBuffer();
+                const info = scrambleInfo || { seed: 0, cols: 5, rows: 5, hash: '' };
+                return await unscrambleImageBlob(rawBuf, info);
+              }
+            } catch (canvasErr) {
+              console.warn(`[ComixDownloader v${VERSION}] Page ${pageNum}: DOM canvas capture failed:`, canvasErr);
+            }
+          }
+          throw fetchErr;
+        }
       }
 
       await new Promise(r => setTimeout(r, 150));
