@@ -2,3 +2,12 @@ AllInOneDownloader-6.5.67.js
 original.js
 not_found.js
 tests/
+
+
+archiveorgdownloader.js
+archiveorg.txt
+es.md
+issue.md
+
+check_version.sh
+check_version.ps1
