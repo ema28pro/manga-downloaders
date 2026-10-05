@@ -17,7 +17,6 @@
 // @require      https://unpkg.com/file-saver@2.0.5/dist/FileSaver.min.js
 // @require      https://update.greasyfork.org/scripts/451810/ImageDownloaderLib.js
 // @connect      *
-// @grant        GM_info
 // @grant        GM_xmlhttpRequest
 // @grant        unsafeWindow
 // @run-at       document-start
@@ -91,17 +90,17 @@
       const targetSlug = getCurrentChapterSlug(reqUrl) || currentSlug;
       const list = [];
 
-      items.forEach((item, i) => {
+      for (const item of items) {
         const u = item?.url || (typeof item === 'string' ? item : null);
-        if (typeof u !== 'string' || !u) return;
+        if (typeof u !== 'string' || !u) continue;
         const src = /^https?:/i.test(u) ? u : baseUrl + u;
         let scramble = null;
         if (item.scramble) {
           scramble = makeScramble(item.scramble.seed, item.scramble.grid, item.scramble.hash);
           storeScramble(src, scramble);
         }
-        list.push({ src, index: i + 1, scramble });
-      });
+        list.push({ src, scramble });
+      }
 
       if (list.length && targetSlug) {
         chapterPagesMap.set(targetSlug, list);
@@ -257,7 +256,8 @@
         const bitmap = await createImageBitmap(new Blob([buffer]));
         const W = bitmap.width;
         const H = bitmap.height;
-        const candidates = getScrambleInitCandidates(hash);
+        // Unscrambled images only need one pass; scrambled ones try every variant
+        const candidates = seed > 0 ? getScrambleInitCandidates(hash) : [0xe42f];
 
         let bestCanvas = null;
         let bestScore = Infinity;
@@ -341,6 +341,8 @@
   }
 
   // ── Image fetcher & unscrambler ────────────────────────────────────────
+  // Every page goes through the Worker and comes out as lossless PNG
+  // (ideal for Photoshop editing).
   async function fetchImageBuffer(pageNum, url, directScramble) {
     const { buffer, headers } = await requestImageBinary(pageNum, url);
 
@@ -348,10 +350,14 @@
     const gridVal = getHeader(headers, 'x-scramble-grid');
     const info = (seedVal && gridVal)
       ? makeScramble(seedVal, gridVal, getHeader(headers, 'x-scramble-hash'))
-      : directScramble || scrambleMap.get(url) || scrambleMap.get(url.split('?')[0]);
+      : directScramble || scrambleMap.get(url) || scrambleMap.get(url.split('?')[0])
+      || { seed: 0, cols: 5, rows: 5, hash: '' };
 
-    // Not scrambled: return the original bytes untouched
-    if (!(info?.seed > 0)) return buffer;
+    // ── Ruta anterior (descomentar para activarla) ────────────────────────
+    // Sin scramble devuelve los bytes originales tal cual los sirve el sitio:
+    // no reencodea (menos peso, mismo origen). El hook de JSZip de abajo ajusta
+    // la extensión al formato real (.webp, .jpg, .png).
+    // if (!(info.seed > 0)) return buffer;
 
     try {
       return await unscrambleInWorker(buffer, info);
@@ -359,6 +365,31 @@
       console.warn(`${TAG} Page ${pageNum}: unscramble failed, returning raw image:`, err);
       return buffer;
     }
+  }
+
+  // ── Real extension from magic bytes (null if not a known image) ────────
+  function getImageExtension(data) {
+    const bytes = data instanceof ArrayBuffer ? new Uint8Array(data, 0, Math.min(data.byteLength, 12))
+      : ArrayBuffer.isView(data) ? new Uint8Array(data.buffer, data.byteOffset, Math.min(data.byteLength, 12))
+      : null;
+    if (!bytes) return null;
+
+    const at = (offset, str) => [...str].every((c, i) => bytes[offset + i] === c.charCodeAt(0));
+    if (bytes[0] === 0x89 && at(1, 'PNG')) return 'png';
+    if (bytes[0] === 0xFF && bytes[1] === 0xD8 && bytes[2] === 0xFF) return 'jpg';
+    if (at(0, 'RIFF') && at(8, 'WEBP')) return 'webp';
+    if (at(0, 'GIF')) return 'gif';
+    if (at(4, 'ftypavif')) return 'avif';
+    return null;
+  }
+
+  // Rename each file inside the ZIP to match its real format
+  if (JSZip?.prototype?.file) {
+    const origZipFile = JSZip.prototype.file;
+    JSZip.prototype.file = function(name, data, options) {
+      const ext = typeof name === 'string' && getImageExtension(data);
+      return origZipFile.call(this, ext ? name.replace(/\.[a-z0-9]+$/i, `.${ext}`) : name, data, options);
+    };
   }
 
   async function fetchPageFromDOM(pageNum, scrambleInfo) {
