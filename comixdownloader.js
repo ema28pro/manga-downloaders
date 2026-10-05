@@ -26,92 +26,95 @@
 (function(JSZip, saveAs, ImageDownloader) {
   'use strict';
 
-  const VERSION = '7.9';
+  const TAG = '[ComixDownloader v7.9]';
   let initialized = false;
   let currentUrl = location.href;
 
   const targetWin = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
-  const rawNativeFetch = targetWin.fetch ? targetWin.fetch.bind(targetWin) : window.fetch.bind(window);
+  const rawNativeFetch = (targetWin.fetch || window.fetch).bind(targetWin);
 
   const scrambleMap = new Map();
   const chapterPagesMap = new Map();
 
-  function getCurrentChapterSlug(url = location.href) {
+  const getCurrentChapterSlug = (url = location.href) => {
     const m = url.match(/\/title\/([^/]+)\/([^/?#]+)/i);
     return m ? `${m[1]}/${m[2]}`.toLowerCase() : null;
+  };
+  const getChapterPages = () => chapterPagesMap.get(getCurrentChapterSlug()) || window.__cdlPages;
+
+  // ── Scramble info helpers ──────────────────────────────────────────────
+  function makeScramble(seed, grid, hash) {
+    const m = (grid || '5x5').match(/(\d+)x(\d+)/i);
+    return {
+      seed: parseInt(seed, 10),
+      cols: m ? parseInt(m[1], 10) : 5,
+      rows: m ? parseInt(m[2], 10) : 5,
+      hash: (hash || '').toLowerCase()
+    };
   }
 
-  // ── Encrypted API Payload Interceptor ─────────────────────────────────
-  const tryCaptureApiPages = (str, reqUrl = '') => {
+  function storeScramble(url, scramble) {
+    scrambleMap.set(url, scramble);
+    scrambleMap.set(url.split('?')[0], scramble);
+  }
+
+  function captureHeaders(url, seed, grid, hash) {
+    if (url && seed && grid) storeScramble(url, makeScramble(seed, grid, hash));
+  }
+
+  const isScrambledHost = url => url && (url.includes('wowpic') || url.includes('/i5/') || url.includes('/i4/'));
+
+  // ── Encrypted API Payload Interceptor ──────────────────────────────────
+  function parsePagesJson(str) {
+    try { return JSON.parse(str); } catch (_) {}
+    const start = str.lastIndexOf('{', str.indexOf('"pages"'));
+    if (start === -1) return null;
+    let depth = 0;
+    for (let i = start; i < str.length; i++) {
+      if (str[i] === '{') depth++;
+      else if (str[i] === '}' && --depth === 0) return JSON.parse(str.substring(start, i + 1));
+    }
+    return null;
+  }
+
+  function tryCaptureApiPages(str, reqUrl = '') {
     if (!str || typeof str !== 'string' || str.length < 50 || !str.includes('"pages"')) return;
     try {
-      let parsed = null;
-      try {
-        parsed = JSON.parse(str);
-      } catch (_) {
-        const idx = str.indexOf('"pages"');
-        if (idx !== -1) {
-          const start = str.lastIndexOf('{', idx);
-          if (start !== -1) {
-            let braceCount = 0;
-            let end = -1;
-            for (let i = start; i < str.length; i++) {
-              if (str[i] === '{') braceCount++;
-              else if (str[i] === '}') {
-                braceCount--;
-                if (braceCount === 0) { end = i + 1; break; }
-              }
-            }
-            if (end !== -1) parsed = JSON.parse(str.substring(start, end));
-          }
-        }
-      }
-
-      if (!parsed) return;
-
+      const parsed = parsePagesJson(str);
       const res = parsed?.result || parsed?.data || parsed;
       const pagesObj = res?.pages;
       const items = Array.isArray(pagesObj?.items) ? pagesObj.items : (Array.isArray(pagesObj) ? pagesObj : null);
-      if (!items || !items.length) return;
+      if (!items?.length) return;
 
       const baseUrl = pagesObj?.baseUrl || '';
-      const list = [];
       const currentSlug = getCurrentChapterSlug();
       const targetSlug = getCurrentChapterSlug(reqUrl) || currentSlug;
+      const list = [];
 
-      for (let i = 0; i < items.length; i++) {
-        const item = items[i];
+      items.forEach((item, i) => {
         const u = item?.url || (typeof item === 'string' ? item : null);
-        if (typeof u === 'string' && u) {
-          const fullUrl = /^https?:/i.test(u) ? u : (baseUrl + u);
-          let scramble = null;
-          if (item && item.scramble) {
-            const gridMatch = (item.scramble.grid || '5x5').match(/(\d+)x(\d+)/i);
-            scramble = {
-              seed: parseInt(item.scramble.seed, 10),
-              cols: gridMatch ? parseInt(gridMatch[1], 10) : 5,
-              rows: gridMatch ? parseInt(gridMatch[2], 10) : 5,
-              hash: (item.scramble.hash || '').toLowerCase()
-            };
-            scrambleMap.set(fullUrl, scramble);
-            scrambleMap.set(fullUrl.split('?')[0], scramble);
-          }
-          list.push({ src: fullUrl, index: i + 1, scramble });
+        if (typeof u !== 'string' || !u) return;
+        const src = /^https?:/i.test(u) ? u : baseUrl + u;
+        let scramble = null;
+        if (item.scramble) {
+          scramble = makeScramble(item.scramble.seed, item.scramble.grid, item.scramble.hash);
+          storeScramble(src, scramble);
         }
-      }
+        list.push({ src, index: i + 1, scramble });
+      });
 
-      if (list.length > 0 && targetSlug) {
+      if (list.length && targetSlug) {
         chapterPagesMap.set(targetSlug, list);
         if (targetSlug === currentSlug) {
           window.__cdlPages = list;
-          console.log(`[ComixDownloader v${VERSION}] Intercepted ${list.length} pages for [${targetSlug}] from API!`);
+          console.log(`${TAG} Intercepted ${list.length} pages for [${targetSlug}] from API!`);
         }
       }
     } catch (_) {}
-  };
+  }
 
-  // ── Network & Decode Hooks (Installed on real page window via targetWin) ──
-  if (targetWin.TextDecoder && targetWin.TextDecoder.prototype) {
+  // ── Network & Decode Hooks (installed on the real page window) ─────────
+  if (targetWin.TextDecoder?.prototype) {
     const origDecode = targetWin.TextDecoder.prototype.decode;
     targetWin.TextDecoder.prototype.decode = function(...args) {
       const res = origDecode.apply(this, args);
@@ -124,26 +127,9 @@
     const origAtob = targetWin.atob;
     targetWin.atob = function(str) {
       const res = origAtob.call(targetWin, str);
-      tryCaptureApiPages(res); // C3 Fixed: analyzes decoded output
+      tryCaptureApiPages(res);
       return res;
     };
-  }
-
-  // ── Network Interceptors (Next.js SPA data & X-Scramble headers) ──────
-  function captureHeaders(url, seed, grid, hash) {
-    if (seed && grid && url) {
-      const m = grid.match(/(\d+)x(\d+)/i);
-      if (m) {
-        const scramble = {
-          seed: parseInt(seed, 10),
-          cols: parseInt(m[1], 10),
-          rows: parseInt(m[2], 10),
-          hash: (hash || '').toLowerCase()
-        };
-        scrambleMap.set(url, scramble);
-        scrambleMap.set(url.split('?')[0], scramble);
-      }
-    }
   }
 
   if (targetWin.fetch) {
@@ -152,12 +138,12 @@
       const res = await origFetch.apply(this, args);
       try {
         const url = typeof args[0] === 'string' ? args[0] : args[0]?.url;
-        const contentType = res.headers?.get('content-type') || '';
+        const type = res.headers?.get('content-type') || '';
         const isMedia = url && (/\.(webp|png|jpe?g|gif|avif|mp4|webm)/i.test(url) || url.includes('/hi/'));
 
-        // C2 Fixed: Only clone and parse text for JSON, text or components (NEVER images)
-        if (!isMedia && (!contentType || contentType.includes('json') || contentType.includes('text') || contentType.includes('x-component'))) {
-          if (url && (url.includes('wowpic') || url.includes('/i5/') || url.includes('/i4/'))) {
+        // Only parse JSON/text/components, never images
+        if (!isMedia && (!type || /json|text|x-component/.test(type))) {
+          if (isScrambledHost(url)) {
             captureHeaders(url, res.headers.get('x-scramble-seed'), res.headers.get('x-scramble-grid'), res.headers.get('x-scramble-hash'));
           }
           res.clone().text().then(text => tryCaptureApiPages(text, url)).catch(() => {});
@@ -167,20 +153,17 @@
     };
   }
 
-  if (targetWin.XMLHttpRequest && targetWin.XMLHttpRequest.prototype) {
+  if (targetWin.XMLHttpRequest?.prototype) {
     const origOpen = targetWin.XMLHttpRequest.prototype.open;
     targetWin.XMLHttpRequest.prototype.open = function(method, url, ...rest) {
       this.addEventListener('load', function() {
         try {
-          if (url && typeof url === 'string') {
-            if (url.includes('wowpic') || url.includes('/i5/') || url.includes('/i4/')) {
-              captureHeaders(url, this.getResponseHeader('x-scramble-seed'), this.getResponseHeader('x-scramble-grid'), this.getResponseHeader('x-scramble-hash'));
-            }
-            if (this.responseType === '' || this.responseType === 'text') {
-              if (this.responseText) {
-                tryCaptureApiPages(this.responseText, url);
-              }
-            }
+          if (typeof url !== 'string') return;
+          if (isScrambledHost(url)) {
+            captureHeaders(url, this.getResponseHeader('x-scramble-seed'), this.getResponseHeader('x-scramble-grid'), this.getResponseHeader('x-scramble-hash'));
+          }
+          if ((this.responseType === '' || this.responseType === 'text') && this.responseText) {
+            tryCaptureApiPages(this.responseText, url);
           }
         } catch (_) {}
       });
@@ -188,7 +171,7 @@
     };
   }
 
-  // ── Permutation Generator & Cost Function (Shared by Main Thread & Worker) ──
+  // ── Permutation Generator & Cost Function (shared by main thread & Worker) ──
   const SCRAMBLE_INIT_CONSTS = [0xe42f, 0x1, 0x1cb1d];
   const SCRAMBLE_HASH_INIT_CONSTS = {
     '03632': [0xe42f],
@@ -199,12 +182,8 @@
   };
 
   function getScrambleInitCandidates(hash) {
-    const preferred = hash ? SCRAMBLE_HASH_INIT_CONSTS[hash] : null;
-    const out = [];
-    for (const initConst of [...(preferred || []), ...SCRAMBLE_INIT_CONSTS]) {
-      if (!out.includes(initConst)) out.push(initConst);
-    }
-    return out;
+    const preferred = (hash && SCRAMBLE_HASH_INIT_CONSTS[hash]) || [];
+    return [...new Set([...preferred, ...SCRAMBLE_INIT_CONSTS])];
   }
 
   function makeScramblePermutation(seed, count, initConst = 0xe42f) {
@@ -221,7 +200,6 @@
       order[last] = order[swapWith];
       order[swapWith] = tmp;
     }
-
     return order;
   }
 
@@ -229,20 +207,15 @@
     let data;
     try { data = ctx.getImageData(0, 0, W, H).data; } catch (_) { return Infinity; }
     const STEP = 3;
+    const diff = (a, b) => Math.abs(data[a] - data[b]) + Math.abs(data[a + 1] - data[b + 1]) + Math.abs(data[a + 2] - data[b + 2]);
     let s = 0;
     for (let c = 1; c < cols; c++) {
       const x = c * tileW;
-      for (let y = 0; y < H; y += STEP) {
-        const a = (y * W + x - 1) * 4, b = (y * W + x) * 4;
-        s += Math.abs(data[a] - data[b]) + Math.abs(data[a + 1] - data[b + 1]) + Math.abs(data[a + 2] - data[b + 2]);
-      }
+      for (let y = 0; y < H; y += STEP) s += diff((y * W + x - 1) * 4, (y * W + x) * 4);
     }
     for (let r = 1; r < rows; r++) {
       const y = r * tileH;
-      for (let x = 0; x < W; x += STEP) {
-        const a = ((y - 1) * W + x) * 4, b = (y * W + x) * 4;
-        s += Math.abs(data[a] - data[b]) + Math.abs(data[a + 1] - data[b + 1]) + Math.abs(data[a + 2] - data[b + 2]);
-      }
+      for (let x = 0; x < W; x += STEP) s += diff(((y - 1) * W + x) * 4, (y * W + x) * 4);
     }
     return s;
   }
@@ -255,21 +228,21 @@
     const count = cols * rows;
 
     ctx.drawImage(bitmap, 0, 0);
-    if (seed <= 0) return { W, H, tileW, tileH, count };
+    if (seed <= 0) return { tileW, tileH };
 
     const perm = makeScramblePermutation(seed, count, initConst);
     for (let i = 0; i < count; i++) {
-      const srcX = (i % cols) * tileW;
-      const srcY = Math.floor(i / cols) * tileH;
-      const dstIndex = perm[i];
-      const dstX = (dstIndex % cols) * tileW;
-      const dstY = Math.floor(dstIndex / cols) * tileH;
-      ctx.drawImage(bitmap, srcX, srcY, tileW, tileH, dstX, dstY, tileW, tileH);
+      const dst = perm[i];
+      ctx.drawImage(
+        bitmap,
+        (i % cols) * tileW, Math.floor(i / cols) * tileH, tileW, tileH,
+        (dst % cols) * tileW, Math.floor(dst / cols) * tileH, tileW, tileH
+      );
     }
-    return { W, H, tileW, tileH, count };
+    return { tileW, tileH };
   }
 
-  // ── Web Worker + OffscreenCanvas Multi-Variant Auto Unscrambler ───────
+  // ── Web Worker + OffscreenCanvas multi-variant unscrambler ─────────────
   const WORKER_CODE = `
     const SCRAMBLE_INIT_CONSTS = ${JSON.stringify(SCRAMBLE_INIT_CONSTS)};
     const SCRAMBLE_HASH_INIT_CONSTS = ${JSON.stringify(SCRAMBLE_HASH_INIT_CONSTS)};
@@ -281,12 +254,10 @@
     self.onmessage = async (e) => {
       try {
         const { buffer, seed, cols, rows, hash } = e.data;
-        const blob = new Blob([buffer]);
-        const bitmap = await createImageBitmap(blob);
+        const bitmap = await createImageBitmap(new Blob([buffer]));
         const W = bitmap.width;
         const H = bitmap.height;
-        const candidates = seed > 0 ? getScrambleInitCandidates(hash) : [0xe42f];
-        const multi = candidates.length > 1;
+        const candidates = getScrambleInitCandidates(hash);
 
         let bestCanvas = null;
         let bestScore = Infinity;
@@ -294,410 +265,165 @@
         for (const initConst of candidates) {
           const canvas = new OffscreenCanvas(W, H);
           const ctx = canvas.getContext('2d');
-          const meta = drawUnscrambledTiles(ctx, bitmap, seed, cols, rows, initConst);
-
-          const score = multi ? scrambleSeamScore(ctx, meta.tileW * cols, meta.tileH * rows, meta.tileW, meta.tileH, cols, rows) : 0;
-          if (!bestCanvas || score < bestScore) {
-            bestCanvas = canvas;
-            bestScore = score;
-          }
-          if (!multi) break;
+          const { tileW, tileH } = drawUnscrambledTiles(ctx, bitmap, seed, cols, rows, initConst);
+          const score = candidates.length > 1
+            ? scrambleSeamScore(ctx, tileW * cols, tileH * rows, tileW, tileH, cols, rows)
+            : 0;
+          if (!bestCanvas || score < bestScore) { bestCanvas = canvas; bestScore = score; }
         }
 
         bitmap.close();
-
-        const outBlob = await bestCanvas.convertToBlob({ type: 'image/png' });
-        const outBuffer = await outBlob.arrayBuffer();
-
-        self.postMessage(
-          { ok: true, buffer: outBuffer, width: W, height: H },
-          [outBuffer]
-        );
+        const outBuffer = await (await bestCanvas.convertToBlob({ type: 'image/png' })).arrayBuffer();
+        self.postMessage({ ok: true, buffer: outBuffer }, [outBuffer]);
       } catch (err) {
         self.postMessage({ ok: false, error: err.message });
       }
     };
   `;
 
-  function unscrambleInWorker(arrayBuffer, seed, cols, rows, hash) {
-    return new Promise((resolve, reject) => {
-      let worker = null;
-      let workerUrl = null;
-
-      try {
-        const workerBlob = new Blob([WORKER_CODE], { type: 'application/javascript' });
-        workerUrl = URL.createObjectURL(workerBlob);
-        worker = new Worker(workerUrl);
-      } catch (e1) {
-        try {
-          const workerBlob = new (unsafeWindow.Blob)([WORKER_CODE], { type: 'application/javascript' });
-          workerUrl = unsafeWindow.URL.createObjectURL(workerBlob);
-          worker = new (unsafeWindow.Worker)(workerUrl);
-        } catch (e2) {
-          try {
-            worker = new Worker('data:application/javascript,' + encodeURIComponent(WORKER_CODE));
-          } catch (e3) {
-            return reject(new Error(`Worker creation failed: ${e3.message}`));
-          }
-        }
-      }
-
-      const cleanup = () => {
-        if (workerUrl) {
-          try { URL.revokeObjectURL(workerUrl); } catch(_) {}
-          try { unsafeWindow.URL.revokeObjectURL(workerUrl); } catch(_) {}
-        }
-        worker.terminate();
-      };
-
-      worker.onmessage = (e) => {
-        cleanup();
-        if (e.data.ok) {
-          resolve(e.data.buffer);
-        } else {
-          reject(new Error(e.data.error));
-        }
-      };
-
-      worker.onerror = (err) => {
-        cleanup();
-        reject(new Error(`Worker error: ${err.message}`));
-      };
-
-      const bufferCopy = arrayBuffer.slice(0);
-      worker.postMessage(
-        { buffer: bufferCopy, seed, cols, rows, hash },
-        [bufferCopy]
-      );
-    });
-  }
-
-  async function unscrambleViaUnsafeWindow(arrayBuffer, seed, cols, rows, hash) {
-    const pageBlob = new (unsafeWindow.Blob)([arrayBuffer]);
-    const bitmap = await unsafeWindow.createImageBitmap(pageBlob);
-    const canvas = document.createElement('canvas');
-    canvas.width = bitmap.width;
-    canvas.height = bitmap.height;
-    const ctx = canvas.getContext('2d');
-
-    const candidates = seed > 0 ? getScrambleInitCandidates(hash) : [0xe42f];
-    drawUnscrambledTiles(ctx, bitmap, seed, cols, rows, candidates[0]);
-    bitmap.close();
-
-    const outBlob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
-    if (!outBlob || outBlob.size < 1000) {
-      throw new Error('toBlob failed in unsafeWindow fallback');
-    }
-
-    return await outBlob.arrayBuffer();
-  }
-
-  async function unscrambleImageBlob(arrayBuffer, scrambleInfo) {
-    const seed = scrambleInfo?.seed || 0;
-    const cols = scrambleInfo?.cols || 5;
-    const rows = scrambleInfo?.rows || 5;
-    const hash = scrambleInfo?.hash || '';
-
+  async function unscrambleInWorker(arrayBuffer, { seed, cols, rows, hash }) {
+    const workerUrl = URL.createObjectURL(new Blob([WORKER_CODE], { type: 'application/javascript' }));
+    const worker = new Worker(workerUrl);
     try {
-      return await unscrambleInWorker(arrayBuffer, seed, cols, rows, hash);
-    } catch (workerErr) {
-      console.warn(`[ComixDownloader v${VERSION}] Worker unscramble failed, falling back to unsafeWindow:`, workerErr);
-      try {
-        return await unscrambleViaUnsafeWindow(arrayBuffer, seed, cols, rows, hash);
-      } catch (unsafeErr) {
-        console.warn(`[ComixDownloader v${VERSION}] unsafeWindow unscramble failed, returning raw ArrayBuffer:`, unsafeErr);
-        return arrayBuffer;
-      }
+      return await new Promise((resolve, reject) => {
+        worker.onmessage = e => e.data.ok ? resolve(e.data.buffer) : reject(new Error(e.data.error));
+        worker.onerror = err => reject(new Error(`Worker error: ${err.message}`));
+        const copy = arrayBuffer.slice(0);
+        worker.postMessage({ buffer: copy, seed, cols, rows, hash }, [copy]);
+      });
+    } finally {
+      URL.revokeObjectURL(workerUrl);
+      worker.terminate();
     }
   }
 
-  function getHeaderValue(headers, headerName) {
-    if (!headers) return null;
-    if (typeof headers === 'string') {
-      const match = headers.match(new RegExp(headerName + ':\\s*([^\\r\\n]+)', 'i'));
-      return match ? match[1].trim() : null;
-    }
-    if (typeof headers === 'object') {
-      if (typeof headers.get === 'function') {
-        const val = headers.get(headerName);
-        if (val) return val;
-      }
-      for (const key of Object.keys(headers)) {
-        if (key.toLowerCase() === headerName.toLowerCase()) return headers[key];
-      }
-    }
-    return null;
-  }
+  const getHeader = (headers, name) => typeof headers === 'string'
+    ? (headers.match(new RegExp(`${name}:\\s*([^\\r\\n]+)`, 'i')) || [])[1]?.trim() || null
+    : headers?.get?.(name) || null;
 
-  // ── Magic-byte image format detection ───────────────────────────────────
-  // Returns the real extension for the given buffer so saved files keep a
-  // name that matches their content (PNG / JPG / WebP).
-  function getImageExtension(buffer) {
+  // ── Network fetcher with timeout; GM_xmlhttpRequest as the only fallback ──
+  async function requestImageBinary(pageNum, url) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 25000);
     try {
-      if (!buffer || !buffer.byteLength) return 'png';
-
-      const bytes = new Uint8Array(buffer);
-
-      // WebP: "RIFF" .... "WEBP"
-      if (bytes.length >= 12 &&
-          bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46 &&
-          bytes[8] === 0x57 && bytes[9] === 0x45 && bytes[10] === 0x42 && bytes[11] === 0x50) {
-        return 'webp';
-      }
-
-      // JPEG: FF D8 FF
-      if (bytes.length >= 3 && bytes[0] === 0xFF && bytes[1] === 0xD8 && bytes[2] === 0xFF) {
-        return 'jpg';
-      }
-
-      // PNG: 89 50 4E 47 0D 0A 1A 0A
-      if (bytes.length >= 4 &&
-          bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4E && bytes[3] === 0x47) {
-        return 'png';
-      }
-    } catch (_) {}
-
-    return 'png';
-  }
-
-  // ── Network Fetcher with Timeouts (A4 Fix: Prevents hanging promises) ──
-  function requestImageBinary(pageNum, url) {
-    return new Promise((resolve, reject) => {
-      const fetchFn = rawNativeFetch || (typeof window.fetch === 'function' ? window.fetch : unsafeWindow?.fetch);
-
-      // 1. Primary: Native fetch with CORS & no-referrer (Unwrapped, with 25s timeout)
-      if (fetchFn) {
-        const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
-        const timeoutId = controller ? setTimeout(() => controller.abort(), 25000) : null;
-
-        fetchFn(url, {
-          method: 'GET',
-          referrerPolicy: 'no-referrer',
-          credentials: 'omit',
-          mode: 'cors',
-          signal: controller?.signal
-        })
-          .then(async res => {
-            if (timeoutId) clearTimeout(timeoutId);
-            if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
-            const buf = await res.arrayBuffer();
-            if (!buf || buf.byteLength <= 1000) throw new Error(`Invalid/empty buffer (${buf?.byteLength || 0}B)`);
-            resolve({
-              buffer: buf,
-              headers: res.headers
-            });
-          })
-          .catch(fetchErr => {
-            if (timeoutId) clearTimeout(timeoutId);
-            console.warn(`[ComixDownloader v${VERSION}] Page ${pageNum}: Native fetch failed (${fetchErr.message}), trying GM_xmlhttpRequest fallback...`);
-            tryGmFallback();
-          });
-      } else {
-        tryGmFallback();
-      }
-
-      function tryGmFallback() {
-        if (typeof GM_xmlhttpRequest !== 'function') {
-          return reject(new Error(`Page ${pageNum}: fetch failed and GM_xmlhttpRequest unavailable`));
-        }
-
-        let completed = false;
+      const res = await rawNativeFetch(url, {
+        referrerPolicy: 'no-referrer',
+        credentials: 'omit',
+        mode: 'cors',
+        signal: controller.signal
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const buffer = await res.arrayBuffer();
+      if (buffer.byteLength <= 1000) throw new Error(`Invalid buffer (${buffer.byteLength}B)`);
+      return { buffer, headers: res.headers };
+    } catch (err) {
+      console.warn(`${TAG} Page ${pageNum}: fetch failed (${err.message}), trying GM_xmlhttpRequest...`);
+      return new Promise((resolve, reject) => {
+        const fail = msg => () => reject(new Error(`Page ${pageNum}: ${msg}`));
         GM_xmlhttpRequest({
           method: 'GET',
           url,
           anonymous: true,
           timeout: 25000,
-          headers: {
-            'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8'
-          },
+          headers: { Accept: 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8' },
           responseType: 'arraybuffer',
-          onload: r => {
-            if (completed) return;
-            completed = true;
-            if (r.status === 200 && r.response?.byteLength > 1000) {
-              return resolve({
-                buffer: r.response,
-                headers: r.responseHeaders
-              });
-            }
-            reject(new Error(`GM_xmlhttpRequest HTTP ${r.status}, ${r.response?.byteLength || 0}B`));
-          },
-          ontimeout: () => {
-            if (completed) return;
-            completed = true;
-            reject(new Error(`GM_xmlhttpRequest timed out after 25s for page ${pageNum}`));
-          },
-          onabort: () => {
-            if (completed) return;
-            completed = true;
-            reject(new Error(`GM_xmlhttpRequest aborted for page ${pageNum}`));
-          },
-          onerror: err => {
-            if (completed) return;
-            completed = true;
-            reject(new Error(`Both fetch and GM_xmlhttpRequest failed for page ${pageNum}: ${err?.message || 'Network error'}`));
-          }
+          onload: r => r.status === 200 && r.response?.byteLength > 1000
+            ? resolve({ buffer: r.response, headers: r.responseHeaders })
+            : reject(new Error(`Page ${pageNum}: GM_xmlhttpRequest HTTP ${r.status}`)),
+          ontimeout: fail('GM_xmlhttpRequest timed out'),
+          onabort: fail('GM_xmlhttpRequest aborted'),
+          onerror: fail('Both fetch and GM_xmlhttpRequest failed')
         });
-      }
-    });
+      });
+    } finally {
+      clearTimeout(timeoutId);
+    }
   }
 
-  // ── Image Fetcher & Unscrambler ────────────────────────────────────────
+  // ── Image fetcher & unscrambler ────────────────────────────────────────
   async function fetchImageBuffer(pageNum, url, directScramble) {
-    console.log(`[ComixDownloader v${VERSION}] Page ${pageNum}: Fetching ${url}...`);
     const { buffer, headers } = await requestImageBinary(pageNum, url);
 
-    let seedVal = getHeaderValue(headers, 'x-scramble-seed');
-    let gridVal = getHeaderValue(headers, 'x-scramble-grid');
-    let hashVal = getHeaderValue(headers, 'x-scramble-hash');
+    const seedVal = getHeader(headers, 'x-scramble-seed');
+    const gridVal = getHeader(headers, 'x-scramble-grid');
+    const info = (seedVal && gridVal)
+      ? makeScramble(seedVal, gridVal, getHeader(headers, 'x-scramble-hash'))
+      : directScramble || scrambleMap.get(url) || scrambleMap.get(url.split('?')[0]);
 
-    let scrambleInfo = directScramble || scrambleMap.get(pageNum) || scrambleMap.get(url) || scrambleMap.get(url.split('?')[0]) || null;
-
-    if (seedVal && gridVal) {
-      const m = gridVal.match(/(\d+)x(\d+)/i);
-      if (m) {
-        scrambleInfo = {
-          seed: parseInt(seedVal, 10),
-          cols: parseInt(m[1], 10),
-          rows: parseInt(m[2], 10),
-          hash: hashVal || ''
-        };
-      }
-    }
-
-    const info = scrambleInfo || { seed: 0, cols: 5, rows: 5, hash: '' };
-
-    // Fast path: image is NOT scrambled (seed === 0). No need to touch it at all:
-    // skip the worker round-trip, the canvas re-encode and the PNG conversion,
-    // returning the original bytes (WebP/JPG/PNG as served) untouched.
-    if (!(Number(info.seed) > 0)) {
-      console.log(`[ComixDownloader v${VERSION}] Page ${pageNum}: Not scrambled (seed=${Number(info.seed) || 0}) — returning original buffer (${buffer.byteLength}B).`);
-      return buffer;
-    }
-
-    console.log(`[ComixDownloader v${VERSION}] Page ${pageNum}: Unscrambling image (seed=${info.seed}, ${info.cols}x${info.rows}, hash=${info.hash || 'default'})...`);
+    // Not scrambled: return the original bytes untouched
+    if (!(info?.seed > 0)) return buffer;
 
     try {
-      const pngBuf = await unscrambleImageBlob(buffer, info);
-      console.log(`[ComixDownloader v${VERSION}] Page ${pageNum}: PNG generated! Output size: ${pngBuf.byteLength}B`);
-      return pngBuf;
+      return await unscrambleInWorker(buffer, info);
     } catch (err) {
-      console.warn(`[ComixDownloader v${VERSION}] Page ${pageNum}: PNG conversion fallback to raw:`, err);
+      console.warn(`${TAG} Page ${pageNum}: unscramble failed, returning raw image:`, err);
       return buffer;
     }
   }
 
-  // ── Serialized Mutex for DOM Strategy ──────────────────────────────────
-  let domLockPromise = Promise.resolve();
-
   async function fetchPageFromDOM(pageNum, scrambleInfo) {
-    const helper = (typeof unsafeWindow !== 'undefined' && unsafeWindow.ComixDomHelper) || (typeof window !== 'undefined' && window.ComixDomHelper);
-    if (helper?.fetchPageFromDOM) {
-      return helper.fetchPageFromDOM(pageNum, scrambleInfo, fetchImageBuffer, unscrambleImageBlob, VERSION);
-    }
-
-    // Fallback compacto directo al DOM si no está cargado ComixDomHelper
+    const selector = `[data-page="${pageNum}"] img, img[data-page="${pageNum}"]`;
     for (let attempt = 0; attempt < 25; attempt++) {
-      const img = document.querySelector(`[data-page="${pageNum}"] img, .rpage-page[data-page="${pageNum}"] img, img[data-page="${pageNum}"]`);
-      if (img?.src && img.src.startsWith('http') && !img.src.includes('data:image')) {
-        return await fetchImageBuffer(pageNum, img.src, scrambleInfo);
-      }
+      const src = document.querySelector(selector)?.src;
+      if (src?.startsWith('http')) return fetchImageBuffer(pageNum, src, scrambleInfo);
       await new Promise(r => setTimeout(r, 180));
     }
-
     throw new Error(`Failed to locate image source for page ${pageNum}`);
   }
 
-  // ── Media Extraction Strategy ──────────────────────────────────────────
   async function getPageImageData(pageNum) {
-    // 1. Direct API Payload Strategy (A1/A2 Fixed: Chapter-scoped)
-    const currentSlug = getCurrentChapterSlug();
-    const chapterPages = (currentSlug && chapterPagesMap.get(currentSlug)) || window.__cdlPages;
-    const pageInfo = Array.isArray(chapterPages) ? chapterPages[pageNum - 1] : null;
-    const scrambleInfo = pageInfo?.scramble || scrambleMap.get(pageNum) || null;
+    const pageInfo = getChapterPages()?.[pageNum - 1];
+    const scramble = pageInfo?.scramble || null;
 
     if (pageInfo?.src) {
-      const apiUrl = pageInfo.src;
-      console.log(`[ComixDownloader v${VERSION}] Page ${pageNum}: Found API payload URL -> ${apiUrl}`);
       try {
-        return await fetchImageBuffer(pageNum, apiUrl, scrambleInfo);
+        return await fetchImageBuffer(pageNum, pageInfo.src, scramble);
       } catch (err) {
-        console.warn(`[ComixDownloader v${VERSION}] Page ${pageNum}: API fetch failed, falling back to DOM strategy:`, err);
+        console.warn(`${TAG} Page ${pageNum}: API fetch failed, falling back to DOM:`, err);
       }
     }
-
-    // 2. Multi-View DOM Strategy (A5 Fixed: Clean sequential mutex chain)
-    const run = domLockPromise.then(
-      () => fetchPageFromDOM(pageNum, scrambleInfo),
-      () => fetchPageFromDOM(pageNum, scrambleInfo)
-    );
-    domLockPromise = run.catch(() => {});
-    return run;
+    return fetchPageFromDOM(pageNum, scramble);
   }
 
-  // Windows reserved device names. These are invalid as filenames even when an
-  // extension is appended (CON.txt, NUL.zip, ...), and the match is case-insensitive.
+  // ── Page metadata ──────────────────────────────────────────────────────
   const WINDOWS_RESERVED_NAME = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i;
 
   function getTitle() {
-    let title = '';
-    const endingTitle = document.querySelector('.rpage-chap-ending__title');
-    const endingMeta = document.querySelector('.rpage-chap-ending__meta');
-    if (endingTitle && endingTitle.textContent) {
-      title = endingTitle.textContent.trim();
-      if (endingMeta && endingMeta.textContent) {
-        const chMatch = endingMeta.textContent.match(/Ch\.\s*\d+/i);
-        if (chMatch) title += ` ${chMatch[0]}`;
-      }
+    let title = document.querySelector('.rpage-chap-ending__title')?.textContent?.trim() || '';
+    if (title) {
+      const ch = document.querySelector('.rpage-chap-ending__meta')?.textContent?.match(/Ch\.\s*\d+/i);
+      if (ch) title += ` ${ch[0]}`;
+    } else {
+      title = (document.title || '').replace(/-\s*Comix.*/i, '').replace(/\|.*/, '').trim();
     }
-    if (!title) {
-      title = document.title || '';
-      title = title.replace(/-\s*Comix.*/i, '').replace(/\|.*/, '').trim();
-    }
-    // Strip characters Windows forbids, then trim leading/trailing whitespace
-    // and any trailing dots (e.g. "Chapter 1..." -> "Chapter 1").
     let safe = title.replace(/[\/\\?%*:|"<>]/g, '_').trim().replace(/\.+$/, '');
-
-    // Prefix reserved device names so the ZIP stays saveable on Windows.
-    // Only the stem is tested, since "CON.txt" is reserved too.
-    if (WINDOWS_RESERVED_NAME.test(safe.split('.')[0])) {
-      safe = `_${safe}`;
-    }
-
+    if (WINDOWS_RESERVED_NAME.test(safe.split('.')[0])) safe = `_${safe}`;
     return safe || `Comix_Chapter_${Date.now()}`;
   }
 
   function getTotalPages() {
-    const currentSlug = getCurrentChapterSlug();
-    const chapterPages = (currentSlug && chapterPagesMap.get(currentSlug)) || window.__cdlPages;
-    if (Array.isArray(chapterPages) && chapterPages.length > 0) {
-      return chapterPages.length;
-    }
-    const pageEls = document.querySelectorAll('.rpage-page, .swiper-slide, .rpage-slide');
-    const segEls = document.querySelectorAll('.rpage-progress__seg');
+    const pages = getChapterPages();
+    if (pages?.length) return pages.length;
+
     let maxPageData = 0;
     document.querySelectorAll('[data-page]').forEach(el => {
-      const p = parseInt(el.getAttribute('data-page'), 10);
-      if (p > maxPageData) maxPageData = p;
+      maxPageData = Math.max(maxPageData, parseInt(el.getAttribute('data-page'), 10) || 0);
     });
-    let counterMax = 0;
-    const counterEl = document.querySelector('.rpage-page__counter');
-    if (counterEl && counterEl.textContent) {
-      const m = counterEl.textContent.match(/\/\s*(\d+)/);
-      if (m) counterMax = parseInt(m[1], 10);
-    }
-    return Math.max(pageEls.length, segEls.length, maxPageData, counterMax);
+    const counterMatch = document.querySelector('.rpage-page__counter')?.textContent?.match(/\/\s*(\d+)/);
+    return Math.max(
+      document.querySelectorAll('.rpage-page, .swiper-slide, .rpage-slide').length,
+      document.querySelectorAll('.rpage-progress__seg').length,
+      maxPageData,
+      counterMatch ? parseInt(counterMatch[1], 10) : 0
+    );
   }
 
   function scanScriptsForPages() {
-    const currentSlug = getCurrentChapterSlug();
-    const chapterPages = (currentSlug && chapterPagesMap.get(currentSlug)) || window.__cdlPages;
-    if (Array.isArray(chapterPages) && chapterPages.length > 0) return;
-    const scripts = document.querySelectorAll('script');
-    for (const s of scripts) {
-      if (s.textContent && s.textContent.includes('"pages"')) {
+    if (getChapterPages()?.length) return;
+    for (const s of document.querySelectorAll('script')) {
+      if (s.textContent?.includes('"pages"')) {
         tryCaptureApiPages(s.textContent);
-        if (Array.isArray(chapterPagesMap.get(currentSlug)) && chapterPagesMap.get(currentSlug).length > 0) break;
+        if (getChapterPages()?.length) break;
       }
     }
   }
@@ -707,15 +433,13 @@
     if (location.href !== currentUrl) {
       currentUrl = location.href;
       initialized = false;
-      scrambleMap.clear(); // A3 Fixed: prevent scramble seed cross-contamination between chapters
-      const currentSlug = getCurrentChapterSlug();
-      window.__cdlPages = currentSlug && chapterPagesMap.has(currentSlug) ? chapterPagesMap.get(currentSlug) : null;
-      if (typeof ImageDownloader?.reset === 'function') {
-        try { ImageDownloader.reset(); } catch (_) {}
-      }
+      scrambleMap.clear();
+      window.__cdlPages = chapterPagesMap.get(getCurrentChapterSlug()) || null;
+      try { ImageDownloader?.reset?.(); } catch (_) {}
     }
 
-    const isReaderPage = /\/title\/[^\/]+\/[^\/]+/.test(location.pathname) || !!document.querySelector('.rpage-main, .rpage-page, .swiper-container, .swiper-wrapper');
+    const isReaderPage = /\/title\/[^/]+\/[^/]+/.test(location.pathname) ||
+      !!document.querySelector('.rpage-main, .rpage-page, .swiper-container, .swiper-wrapper');
     if (!isReaderPage || initialized) return;
 
     scanScriptsForPages();
@@ -725,11 +449,11 @@
     initialized = true;
 
     const title = getTitle();
-    console.log(`[ComixDownloader v${VERSION}] Initialized. ${totalPages} pages found. Title: "${title}"`);
+    console.log(`${TAG} Initialized. ${totalPages} pages found. Title: "${title}"`);
 
     ImageDownloader.init({
       maxImageAmount: totalPages,
-      title: title,
+      title,
       imageSuffix: 'png',
       getImagePromises: (startNum, endNum) => {
         const promises = [];
@@ -738,7 +462,7 @@
             getPageImageData(p)
               .then(ImageDownloader.fulfillHandler)
               .catch(err => {
-                console.error(`[ComixDownloader v${VERSION}] Page ${p} failed:`, err);
+                console.error(`${TAG} Page ${p} failed:`, err);
                 return ImageDownloader.rejectHandler(err);
               })
           );
